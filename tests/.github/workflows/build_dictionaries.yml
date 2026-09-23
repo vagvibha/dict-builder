@@ -1,0 +1,107 @@
+name: Build Dictionaries
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+# The job force-pushes the 'dictionaries' branch; never run two at once.
+concurrency:
+  group: build-dictionaries
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  PUBLISH_BRANCH: dictionaries
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install System Dependencies (dictzip)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dictzip
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyglossary pyyaml
+
+      - name: Run Unit Tests
+        run: python -m unittest discover -s tests -t . -v
+
+      # The previously published dictionaries (if any) - used to decide
+      # whether a dictionary really changed and needs a new version.
+      - name: Fetch Published Dictionaries
+        run: |
+          mkdir -p "${RUNNER_TEMP}/published"
+          if git fetch --depth=1 origin "${PUBLISH_BRANCH}"; then
+            git archive FETCH_HEAD | tar -x -C "${RUNNER_TEMP}/published"
+          else
+            echo "No '${PUBLISH_BRANCH}' branch yet - everything is new."
+          fi
+
+      - name: Build Dictionaries
+        run: |
+          PUBLISHED_DIR="${RUNNER_TEMP}/published/dictionaries" \
+            bash scripts/build_dictionaries.sh
+
+      # Stats are small text files whose history is wanted, so they live on
+      # master. Pushes made with GITHUB_TOKEN don't trigger another run.
+      - name: Commit Stats
+        if: github.ref == 'refs/heads/master'
+        run: |
+          git add content/*/*.stats
+          if git diff --cached --quiet; then
+            echo "Stats unchanged."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Update dictionary stats" \
+                     -m "Built from ${GITHUB_SHA::7}. Changed: $(paste -sd' ' build/changed_dictionaries.txt)"
+          # master may have moved while we were building.
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin master && git push origin HEAD:master && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          echo "::warning::Could not push stats; the next build will pick them up."
+
+      # Replaces the branch with a single parent-less commit, so only the
+      # latest dictionaries are kept (no history). Skipped if nothing changed.
+      - name: Publish Dictionaries
+        run: |
+          if diff -rq build/stardict "${RUNNER_TEMP}/published/dictionaries" >/dev/null 2>&1; then
+            echo "Dictionaries unchanged - nothing to publish."
+            exit 0
+          fi
+
+          out="${RUNNER_TEMP}/out"
+          rm -rf "${out}" && mkdir -p "${out}"
+          cp -a build/stardict "${out}/dictionaries"
+
+          export GIT_INDEX_FILE="${RUNNER_TEMP}/publish.index"
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME}"
+          export GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL}"
+
+          git --work-tree="${out}" add -A
+          tree=$(git write-tree)
+          commit=$(git commit-tree "${tree}" \
+            -m "Dictionaries built from ${GITHUB_SHA::7}" \
+            -m "Changed: $(paste -sd' ' build/changed_dictionaries.txt)")
+          git push --force origin "${commit}:refs/heads/${PUBLISH_BRANCH}"
