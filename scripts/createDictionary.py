@@ -79,7 +79,6 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
         target = target.resolve()
         matches = [f for f in input_files if f.resolve() == target]
         if not matches:
-            print(f"Target: {target}")
             raise DictionaryBuildError(
                 f"--file {only_file!r} does not resolve to one of this book's "
                 f"input files (checked {len(input_files)} files under {dict_dir} "
