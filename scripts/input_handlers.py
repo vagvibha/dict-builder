@@ -326,6 +326,9 @@ class ShlokaInputHandler(BaseInputHandler):
         exclude_all_derived = False
         ignore_shloka_key = False
         has_double_plus = False
+        # HEADER:show_anvaya=false: '++ ' lines still supply keys but are
+        # left out of the entry (like '+ ' lines).
+        show_anvaya = headers.get('show_anvaya', True)
 
         # get notes, and any additional words
         for note in notes_payload.split('\n'):
@@ -345,7 +348,8 @@ class ShlokaInputHandler(BaseInputHandler):
                     excluded_words.remove('nokey')
             elif note[0:3] == '++ ':
                 has_double_plus = True
-                non_meta_notes.append(note)
+                if show_anvaya:
+                    non_meta_notes.append(note)
                 additional_tokens.extend(self.extract_double_plus_tokens(note[3:]))
             elif note[0:2] == "+ ":
                 additional_tokens.extend([word.strip()

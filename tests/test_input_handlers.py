@@ -201,6 +201,22 @@ class TestShloka(unittest.TestCase):
         self.assertEqual(self.h.process_stream("a b ॥१॥", {'auto_shloka': False}), [])
 
 
+    # --- show_anvaya header -------------------------------------------
+    def test_show_anvaya_false_hides_line_keeps_keys(self):
+        text = "a b\n====\n++ c d\nnote"
+        hdr = {'show_anvaya': False, 'title': 'T'}
+        self.assertEqual(self.words(text, hdr), ['c', 'd'])
+        self.assertEqual(self.entry(text, hdr), 'a b<br>====<br>note<br>[T]')
+        self.assertEqual(self.entry(text, {'title': 'T'}),
+                         'a b<br>====<br>++ c d<br>note<br>[T]')
+
+    def test_show_anvaya_false_only_meta_lines_no_separator(self):
+        text = "a b\n====\n++ c d\n+ e"
+        hdr = {'show_anvaya': False, 'title': 'T'}
+        self.assertEqual(self.words(text, hdr), ['c', 'd', 'e'])
+        self.assertEqual(self.entry(text, hdr), 'a b<br>[T]')
+
+
 class TestShlokaKey(unittest.TestCase):
     """shlokakey needs the real translator (it converts Devanagari digits)."""
 

@@ -68,7 +68,8 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
     global_exclusions = utils.load_global_exclusions()
     book_exclusions = set(global_exclusions) | set(meta['skip'])
 
-    ALLOWED_METADATA = {'title', 'shlokakey', 'lang', 'skip', 'type', 'auto_shloka'}
+    ALLOWED_METADATA = {'title', 'shlokakey', 'lang', 'skip', 'type', 'auto_shloka',
+                        'show_anvaya'}
 
     input_files = utils.discover_input_files(dict_dir, meta['folders'])
 
@@ -115,9 +116,10 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
         if 'skip' in headers:
             headers['skip'] = [w.strip() for w in headers['skip'].split(';') if w.strip()]
 
-        if 'auto_shloka' in headers:
-            headers['auto_shloka'] = parse_bool_header(
-                headers['auto_shloka'], 'auto_shloka', file_path)
+        for bool_key in ('auto_shloka', 'show_anvaya'):
+            if bool_key in headers:
+                headers[bool_key] = parse_bool_header(
+                    headers[bool_key], bool_key, file_path)
 
         file_type = resolve_file_type(headers, meta['type'], file_path)
 

@@ -139,6 +139,7 @@ class TestBuildBook(_TempDirTest):
         cases = {
             "unknown header": ("HEADER:bogus=1\n- k\nx", 1),
             "bad auto_shloka": ("HEADER:type=shloka\nHEADER:auto_shloka=maybe\nx", None),
+            "bad show_anvaya": ("HEADER:type=shloka\nHEADER:show_anvaya=maybe\nx", None),
             "no type": ("- k\nx", 1),
             "unmatched bold": ("HEADER:type=notes\n- k\n**x", 3),
         }

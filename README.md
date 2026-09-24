@@ -75,7 +75,7 @@ Top of file: optional `#` comment lines, then optional `HEADER:key=value`
 lines. Allowed keys: `title` (source shown as `[title]` on each entry),
 `type` (`one-liner` | `notes` | `shloka`), `skip` (`;`-separated shloka
 exclusions), `lang` (`en` → no `(eng)` suffix on keys), `shlokakey`,
-`auto_shloka` (`true`/`false`).
+`auto_shloka` (`true`/`false`), `show_anvaya` (`true`/`false`).
 
 `**bold**` becomes `<b>bold</b>`. A `**` without a partner, or a pair more
 than 5 lines apart, is an error.
@@ -103,10 +103,11 @@ separator and verse numbers dropped. Special lines in the notes part:
 |---|---|
 | `- w1; w2` | don't use these words as keys; `all` = no keys from the verse; `nokey` = no shlokakey |
 | `+ k1;k2` | extra keys, used as written |
-| `++ anvaya text` | keys from these words **instead of** the verse; punctuation and `(…)` are ignored; the line stays in the entry |
+| `++ anvaya text` | keys from these words **instead of** the verse; punctuation and `(…)` are ignored; the line stays in the entry unless `HEADER:show_anvaya=false` |
 
 `HEADER:auto_shloka=false` turns off keys from the verse text entirely
-(only `+`/`++` supply keys). `HEADER:shlokakey=BG,2,2` adds a key built
+(only `+`/`++` supply keys). `HEADER:show_anvaya=false` keeps
+the `++` keys but leaves the `++` line out of the entry. `HEADER:shlokakey=BG,2,2` adds a key built
 from the verse number, e.g. `॥३-२१॥` → `BG-03-21` (prefix, then a
 zero-pad width per level). Exclusions for verse words come from
 `scripts/config/exclusions.yaml`, meta.yaml `skip`, and `HEADER:skip`.
