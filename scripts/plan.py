@@ -14,19 +14,30 @@ A workspace is a directory with content/meta.yaml:
         dictionaries: [kavya]      # optional; only used if the manifest is missing
         defaults:            # optional meta for dictionaries with no meta.yaml
           type: notes
+    generated:               # optional: dictionaries produced by a converter
+      - id: amarakosha       # output: <workspace>/build/generated/<id>/<id>.txt
+        converter: amarakosha_tsv_to_notes   # scripts/converters/<name>.py
+        args: [--words, masters/amarakosha/words.tsv,   # relative to the
+               --shlokas, masters/amarakosha/shlokas.tsv]  # workspace root
+        meta: {name: Amarakosha}   # optional; defaults: name=<id>, type=notes
 
 The source's manifest uses the same format as content/meta.yaml
 ('dictionaries:' list, relative to the manifest's own directory), so the
 source repo decides what it offers and how it is laid out. Any 'sources:'
 in a source's manifest is ignored (no nesting).
 
+Converters are run with the workspace as the current directory and get
+"--output <file>" appended to their args.
+
 Subcommands:
     plan.py fetch --workspace W   clone/update every source (latest of ref)
+    plan.py generate --workspace W   run every converter in 'generated:'
     plan.py list  --workspace W   print "<id>\\t<dir>\\t<meta-defaults-json>" lines
 """
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +50,9 @@ from utils import KNOWN_TYPES
 ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 DEFAULT_MANIFEST = "dict/meta.yaml"
 SOURCE_KEYS = {"name", "repo", "ref", "manifest", "suffix", "dictionaries", "defaults"}
+GENERATED_KEYS = {"id", "converter", "args", "meta"}
+CONVERTER_RE = re.compile(r'^[a-z0-9_]+$')
+CONVERTERS_DIR = Path(__file__).resolve().parent / "converters"
 
 
 def _read_yaml(path: Path) -> dict:
@@ -97,18 +111,49 @@ def load_workspace_config(content_dir: Path) -> dict:
             "defaults": defaults,
         })
 
+    generated = []
+    for i, gen in enumerate(raw.get("generated") or []):
+        where = f"generated[{i}]"
+        if not isinstance(gen, dict):
+            raise DictionaryBuildError(f"{where} must be a mapping", file=meta_path)
+        unknown = set(gen) - GENERATED_KEYS
+        if unknown:
+            raise DictionaryBuildError(f"{where}: unknown keys {sorted(unknown)}", file=meta_path)
+        gid = str(gen.get("id", "")).strip()
+        if not ID_RE.match(gid):
+            raise DictionaryBuildError(f"{where}: 'id' must match {ID_RE.pattern}", file=meta_path)
+        conv = str(gen.get("converter", "")).strip()
+        if not CONVERTER_RE.match(conv) or not (CONVERTERS_DIR / f"{conv}.py").is_file():
+            raise DictionaryBuildError(
+                f"{where} ({gid}): unknown converter '{conv}' (expected a file "
+                f"scripts/converters/<name>.py)", file=meta_path)
+        args = gen.get("args") or []
+        if not isinstance(args, list) or not all(isinstance(a, (str, int, float)) for a in args):
+            raise DictionaryBuildError(f"{where} ({gid}): 'args' must be a list of strings",
+                                       file=meta_path)
+        meta = gen.get("meta") or {}
+        if not isinstance(meta, dict):
+            raise DictionaryBuildError(f"{where} ({gid}): 'meta' must be a mapping", file=meta_path)
+        if meta.get("type") is not None and meta["type"] not in KNOWN_TYPES:
+            raise DictionaryBuildError(f"{where} ({gid}): unknown type '{meta['type']}'",
+                                       file=meta_path)
+        generated.append({"id": gid, "converter": conv, "args": [str(a) for a in args],
+                          "meta": meta})
+
     names = [s["name"] for s in sources]
     if len(set(names)) != len(names):
         raise DictionaryBuildError("duplicate source names", file=meta_path)
-    if not local and not sources:
-        raise DictionaryBuildError("meta.yaml must define 'dictionaries' and/or 'sources'",
-                                   file=meta_path)
-    return {"dictionaries": local, "sources": sources, "path": meta_path}
+    if not local and not sources and not generated:
+        raise DictionaryBuildError(
+            "meta.yaml must define 'dictionaries', 'generated' and/or 'sources'", file=meta_path)
+    return {"dictionaries": local, "sources": sources, "generated": generated,
+            "path": meta_path}
 
 
-def build_plan(content_dir: Path, external_dir: Path) -> list:
+def build_plan(content_dir: Path, external_dir: Path, generated_dir: Path = None) -> list:
     """Returns [{'id', 'dir', 'meta_defaults', 'source'}] for every
-    dictionary to build, local ones first, in config order."""
+    dictionary to build: local, then generated, then external, each in
+    config order."""
     cfg = load_workspace_config(content_dir)
     plan = []
 
@@ -118,6 +163,16 @@ def build_plan(content_dir: Path, external_dir: Path) -> list:
             raise DictionaryBuildError(f"dictionary '{name}' has no {name}/meta.yaml",
                                        file=cfg["path"])
         plan.append({"id": name, "dir": d, "meta_defaults": None, "source": None})
+
+    for gen in cfg["generated"]:
+        d = (generated_dir or content_dir.parent / "build" / "generated") / gen["id"]
+        if not d.is_dir():
+            raise DictionaryBuildError(
+                f"generated dictionary '{gen['id']}' has not been generated (expected {d}); "
+                "run 'plan.py generate' first", file=cfg["path"])
+        plan.append({"id": gen["id"], "dir": d,
+                     "meta_defaults": {"name": gen["id"], "type": "notes", **gen["meta"]},
+                     "source": None})
 
     for src in cfg["sources"]:
         root = external_dir / src["name"]
@@ -190,10 +245,33 @@ def fetch_sources(content_dir: Path, external_dir: Path) -> list:
     return fetched
 
 
+def generate(workspace: Path, generated_dir: Path) -> list:
+    """Runs every converter in 'generated:' into generated_dir/<id>/<id>.txt.
+    Returns the ids generated."""
+    cfg = load_workspace_config(workspace / "content")
+    done = []
+    for gen in cfg["generated"]:
+        out_dir = generated_dir / gen["id"]
+        shutil.rmtree(out_dir, ignore_errors=True)
+        out_dir.mkdir(parents=True)
+        cmd = [sys.executable, str(CONVERTERS_DIR / f"{gen['converter']}.py"), *gen["args"],
+               "--output", str(out_dir / f"{gen['id']}.txt")]
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
+        if res.stderr:
+            sys.stderr.write(res.stderr)
+        if res.returncode != 0:
+            raise DictionaryBuildError(
+                f"converter '{gen['converter']}' for '{gen['id']}' failed "
+                f"(exit {res.returncode})", file=cfg["path"])
+        print(f"Generated {gen['id']} ({gen['converter']})", file=sys.stderr)
+        done.append(gen["id"])
+    return done
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["fetch", "list"])
+    parser.add_argument("command", choices=["fetch", "generate", "list"])
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--sources-file", type=Path,
                         help="fetch: also write '<name> <repo> <sha>' lines here")
@@ -201,6 +279,7 @@ def main():
 
     content_dir = args.workspace / "content"
     external_dir = args.workspace / "external"
+    generated_dir = args.workspace / "build" / "generated"
     try:
         if args.command == "fetch":
             fetched = fetch_sources(content_dir, external_dir)
@@ -208,8 +287,10 @@ def main():
                 args.sources_file.parent.mkdir(parents=True, exist_ok=True)
                 args.sources_file.write_text(
                     "".join(f"{n} {r} {s}\n" for n, r, s in fetched), encoding="utf-8")
+        elif args.command == "generate":
+            generate(args.workspace, generated_dir)
         else:
-            for e in build_plan(content_dir, external_dir):
+            for e in build_plan(content_dir, external_dir, generated_dir):
                 print(f"{e['id']}\t{e['dir']}\t{json.dumps(e['meta_defaults'] or {}, ensure_ascii=False)}")
     except DictionaryBuildError as e:
         print(f"❌ {e}", file=sys.stderr)

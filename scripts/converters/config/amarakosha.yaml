@@ -1,0 +1,34 @@
+# Configuration for converters/amarakosha_tsv_to_notes.py.
+#
+# Columns are looked up by their header text, so their order in the TSV
+# doesn't matter. Extra columns are ignored. A copy of this file can live
+# next to the TSVs in the content repo and be passed with --config.
+
+title: अमरकोषः
+
+# Record id for a verse reference kanda।varga।shloka, e.g. 1।5।1 ->
+# AK-1-05-001. Python format string over the three integers.
+id_format: "AK-{0}-{1:02d}-{2:03d}"
+# How a reference is shown (digits are converted to Devanagari).
+display_format: "{0}।{1}।{2}"
+
+# Cell values treated as empty (e.g. spreadsheet formula errors).
+placeholder_values: ["#N/A", "TBD"]
+
+columns:
+  shlokas:
+    ref: संख्या          # kanda।varga।shloka
+    varga: वर्गः         # e.g. "1।05 (धीवर्गः)" - the name in () is used
+    text: श्लोकः
+  words:
+    word: प्रातिपदिकम्
+    ref: संख्या          # verse the word occurs in
+    order: अन्तर्संख्या  # position within the verse, e.g. 1।4
+    meaning: अर्थः
+    lingam: लिङ्गम्
+    vachanam: वचनम्
+    sudha: सुधा
+    kshirasvami: क्षीरस्वामी
+
+# Shown when a word's क्षीरस्वामी cell is empty.
+kshirasvami_default: "॥*॥"

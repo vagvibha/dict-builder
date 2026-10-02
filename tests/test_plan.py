@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tests.helpers import write
 from errors import DictionaryBuildError
-from plan import build_plan, fetch_sources, load_workspace_config
+from plan import build_plan, fetch_sources, generate, load_workspace_config
 
 
 def make_git_repo(path: Path, files: dict) -> str:
@@ -123,6 +123,61 @@ class TestBuildPlan(_Workspace):
         with self.assertRaises(DictionaryBuildError) as ctx:
             build_plan(self.content, self.external)
         self.assertIn("duplicate", str(ctx.exception))
+
+
+class TestGenerated(_Workspace):
+    GEN = ("generated:\n  - id: ak\n    converter: amarakosha_tsv_to_notes\n"
+           "    args: [--words, masters/w.tsv, --shlokas, masters/s.tsv]\n")
+
+    def masters(self):
+        from tests.test_converters import SHLOKAS_TSV, WORDS_TSV
+        write(self.ws / "masters/w.tsv", WORDS_TSV)
+        write(self.ws / "masters/s.tsv", SHLOKAS_TSV)
+
+    def test_config(self):
+        self.config(self.GEN + "    meta: {name: Amarakosha}\n")
+        gen = load_workspace_config(self.content)["generated"][0]
+        self.assertEqual(gen, {"id": "ak", "converter": "amarakosha_tsv_to_notes",
+                               "args": ["--words", "masters/w.tsv", "--shlokas", "masters/s.tsv"],
+                               "meta": {"name": "Amarakosha"}})
+
+    def test_config_errors(self):
+        cases = {
+            "unknown converter": "generated:\n  - {id: a, converter: nosuch}\n",
+            "path converter": "generated:\n  - {id: a, converter: ../plan}\n",
+            "bad args": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, args: x}\n",
+            "bad id": "generated:\n  - {id: 'a b', converter: amarakosha_tsv_to_notes}\n",
+            "bad type": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, "
+                        "meta: {type: bogus}}\n",
+            "unknown key": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, x: 1}\n",
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.config(text)
+                with self.assertRaises(DictionaryBuildError):
+                    load_workspace_config(self.content)
+
+    def test_generate_and_plan(self):
+        self.masters()
+        self.local("sahitya")
+        self.config("dictionaries: [sahitya]\n" + self.GEN)
+        gen_dir = self.ws / "build/generated"
+        with self.assertRaises(DictionaryBuildError):
+            build_plan(self.content, self.external, gen_dir)   # not generated yet
+
+        write(gen_dir / "ak/stale.txt", "old")
+        self.assertEqual(generate(self.ws, gen_dir), ["ak"])
+        self.assertEqual(sorted(p.name for p in (gen_dir / "ak").iterdir()), ["ak.txt"])
+
+        plan = build_plan(self.content, self.external, gen_dir)
+        self.assertEqual([e["id"] for e in plan], ["sahitya", "ak"])
+        self.assertEqual(plan[1]["meta_defaults"], {"name": "ak", "type": "notes"})
+
+    def test_generate_failure(self):
+        self.config(self.GEN)   # masters missing
+        with self.assertRaises(DictionaryBuildError) as ctx:
+            generate(self.ws, self.ws / "build/generated")
+        self.assertIn("amarakosha_tsv_to_notes", str(ctx.exception))
 
 
 class TestFetch(_Workspace):

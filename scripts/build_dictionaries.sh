@@ -6,6 +6,7 @@
 # The workspace must contain content/meta.yaml (see plan.py for the
 # format). Everything the build produces lives in the workspace:
 #   external/<source>/        fetched external sources (gitignore this)
+#   build/generated/<id>/     output of converters ('generated:')
 #   build/stardict/<id>/      StarDict output
 #   build/sources.txt         "<source> <repo> <sha>" for each fetched source
 #   build/changed_dictionaries.txt
@@ -48,6 +49,9 @@ if [ "${SKIP_FETCH:-0}" != "1" ]; then
     python3 "${SCRIPTS}/plan.py" fetch --workspace "${WORKSPACE}" \
         --sources-file "${BUILD_DIR}/sources.txt"
 fi
+
+# Dictionaries produced by converters (content/meta.yaml 'generated:').
+python3 "${SCRIPTS}/plan.py" generate --workspace "${WORKSPACE}"
 
 # "<id>\t<dir>\t<meta-defaults-json>" per dictionary. Parallel arrays and a
 # plain read loop (no mapfile / assoc arrays) - macOS ships bash 3.2.

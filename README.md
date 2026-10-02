@@ -29,8 +29,10 @@ content/meta.yaml          what to build (below)
 content/<id>/meta.yaml     one directory per local dictionary
 content/<id>/*.txt         input files
 stats/<id>.stats           written by the build; commit these
+masters/                   (convention) source data for converters, e.g. TSV exports
 external/                  fetched external sources   (gitignore)
 build/                     build output               (gitignore)
+  generated/<id>/          converter output ('generated:')
   stardict/<id>/           the StarDict files
   changed_dictionaries.txt ids that got a new version this build
   sources.txt              "<source> <repo> <sha>" per fetched source
@@ -50,6 +52,20 @@ sources:                   # optional: dictionaries maintained in other repos
     suffix: -repoA-Nick    # optional; default "-<name>"
     dictionaries: [kavya]  # optional; used only if the manifest is missing
     defaults: {type: notes}    # optional; meta for dirs without meta.yaml
+```
+
+`generated:` (optional) lists dictionaries produced by a converter on
+every build. The converter runs with the workspace root as its current
+directory and gets `--output build/generated/<id>/<id>.txt` appended:
+
+```yaml
+generated:
+  - id: amarakosha
+    converter: amarakosha_tsv_to_notes          # scripts/converters/<name>.py
+    args: [--words, masters/amarakosha/words.tsv,
+           --shlokas, masters/amarakosha/shlokas.tsv,
+           --config, masters/amarakosha/amarakosha.yaml]   # --config optional
+    meta: {name: Amarakosha}                    # optional; default name=<id>, type=notes
 ```
 
 A source's **manifest** has the same format as the `dictionaries:` list
@@ -111,6 +127,22 @@ the `++` keys but leaves the `++` line out of the entry. `HEADER:shlokakey=BG,2,
 from the verse number, e.g. `॥३-२१॥` → `BG-03-21` (prefix, then a
 zero-pad width per level). Exclusions for verse words come from
 `scripts/config/exclusions.yaml`, meta.yaml `skip`, and `HEADER:skip`.
+
+## Converters
+
+`scripts/converters/` holds standalone scripts that turn data kept in some
+other shape (spreadsheet exports etc.) into one of the input formats above.
+Each takes `--output FILE`, exits 2 with a `file:line` message on a data
+problem, and can be run by hand or from `generated:`.
+
+**`amarakosha_tsv_to_notes.py`** reads the Amarakosha `words` and `shlokas`
+TSV exports and writes one `notes` file: an entry per verse (key
+`AK-1-05-001`, its words grouped by meaning, Prev/Next links) and an entry
+per word (details, all words of the same meaning, its verse). Columns are
+found by header name, set in `converters/config/amarakosha.yaml` (pass your
+own copy with `--config`). Every `bword://` link must point at a key in the
+output, otherwise it's an error. `--debug --varga 1।05` converts one varga
+and turns those errors into warnings, for checking output.
 
 ## Versioning
 

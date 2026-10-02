@@ -278,6 +278,26 @@ class TestBuildScript(_TempDirTest):
         self.assertEqual(self.run_build(env=env).returncode, 0)
         self.assertFalse((self.ws / "build/sources.txt").exists())
 
+    def test_generated(self):
+        from tests.test_converters import SHLOKAS_TSV, WORDS_TSV
+        write(self.ws / "masters/ak/words.tsv", WORDS_TSV)
+        write(self.ws / "masters/ak/shlokas.tsv", SHLOKAS_TSV)
+        write(self.ws / "content/meta.yaml",
+              "dictionaries:\n  - test\n"
+              "generated:\n  - id: amarakosha\n    converter: amarakosha_tsv_to_notes\n"
+              "    args: [--words, masters/ak/words.tsv, --shlokas, masters/ak/shlokas.tsv]\n"
+              "    meta: {name: Amarakosha}\n")
+        self.assertEqual(self.build(), ["test", "amarakosha"])
+        self.assertTrue((self.ws / "build/stardict/amarakosha/amarakosha.ifo").exists())
+        self.assertEqual((self.ws / "stats/amarakosha.stats").read_text(encoding="utf-8"),
+                         "amarakosha.txt: 10, 10\nTOTAL: 10, 10 (synonly: 0)\n")
+
+        # A data error in the masters stops the build.
+        write(self.ws / "masters/ak/shlokas.tsv", "संख्या\tश्लोकः\n")
+        res = self.run_build()
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("shlokas.tsv:1", res.stderr)
+
     def test_stale_stats_removed(self):
         write(self.ws / "stats/gone.stats", "old")
         self.build()
