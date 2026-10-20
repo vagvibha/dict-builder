@@ -1,2 +1,4 @@
 pyglossary
 pyyaml
+google-auth   # sheet sync only (plan.py sync-sheets)
+requests      # sheet sync only

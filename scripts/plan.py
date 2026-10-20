@@ -34,6 +34,7 @@ Subcommands:
     plan.py fetch --workspace W   clone/update every source (latest of ref)
     plan.py generate --workspace W   run every converter in 'generated:'
     plan.py list  --workspace W   print "<id>\\t<dir>\\t<meta-defaults-json>" lines
+    plan.py sync-sheets --workspace W   download the 'sheets:' tabs (see sheets.py)
 All take --content-dir DIR (default: contents).
 """
 import argparse
@@ -150,7 +151,7 @@ def load_workspace_config(content_dir: Path) -> dict:
         raise DictionaryBuildError(
             "meta.yaml must define 'dictionaries', 'generated' and/or 'sources'", file=meta_path)
     return {"dictionaries": local, "sources": sources, "generated": generated,
-            "path": meta_path}
+            "sheets": raw.get("sheets"), "path": meta_path}
 
 
 def build_plan(content_dir: Path, external_dir: Path, generated_dir: Path = None) -> list:
@@ -271,10 +272,22 @@ def generate(workspace: Path, content_dir: Path, generated_dir: Path) -> list:
     return done
 
 
+def sync_sheets(workspace: Path, content_dir: Path, client=None, log=None) -> list:
+    """Downloads every 'sheets:' tab (all or nothing). Returns the files written."""
+    import sheets
+    cfg = load_workspace_config(content_dir)
+    entries = sheets.load_sheets_config(cfg["sheets"], workspace, cfg["path"])
+    if not entries:
+        print("No 'sheets:' configured.", file=sys.stderr)
+        return []
+    return sheets.sync(entries, content_dir, client=client,
+                       log=log or (lambda m: print(m, file=sys.stderr)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["fetch", "generate", "list"])
+    parser.add_argument("command", choices=["fetch", "generate", "list", "sync-sheets"])
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--content-dir", type=Path, default=Path(DEFAULT_CONTENT_DIR),
                         help="content directory, relative to the workspace "
@@ -295,6 +308,8 @@ def main():
                     "".join(f"{n} {r} {s}\n" for n, r, s in fetched), encoding="utf-8")
         elif args.command == "generate":
             generate(args.workspace, content_dir, generated_dir)
+        elif args.command == "sync-sheets":
+            sync_sheets(args.workspace, content_dir)
         else:
             for e in build_plan(content_dir, external_dir, generated_dir):
                 print(f"{e['id']}\t{e['dir']}\t{json.dumps(e['meta_defaults'] or {}, ensure_ascii=False)}")

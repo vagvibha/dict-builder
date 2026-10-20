@@ -56,17 +56,25 @@ def load_book_meta(dict_dir: Path, defaults: dict = None) -> dict:
     }
 
 
+INPUT_SUFFIXES = (".txt", ".csv")   # .csv = the 'table' format (table_input.py)
+
+
+def _input_files_in(d: Path) -> list:
+    return sorted(p for p in d.iterdir() if p.is_file() and p.suffix in INPUT_SUFFIXES)
+
+
 def discover_input_files(dict_dir: Path, folders: list) -> list:
-    """Top-level *.txt files in dict_dir, plus *.txt files (one level deep,
-    non-recursive) in each of the named `folders`. Sorted for determinism."""
-    files = sorted(dict_dir.glob("*.txt"))
+    """Top-level *.txt and *.csv files in dict_dir, plus those (one level
+    deep, non-recursive) in each of the named `folders`. Sorted for
+    determinism."""
+    files = _input_files_in(dict_dir)
     for folder in folders:
         sub = dict_dir / folder
         if not sub.is_dir():
             raise DictionaryBuildError(
                 f"folders entry '{folder}' in meta.yaml is not a directory",
                 file=dict_dir / "meta.yaml")
-        files.extend(sorted(sub.glob("*.txt")))
+        files.extend(_input_files_in(sub))
     return files
 
 

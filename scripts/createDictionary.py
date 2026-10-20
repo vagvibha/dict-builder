@@ -8,6 +8,8 @@ import utils
 import output_processing
 import input_handlers
 import markup
+import table_input
+import transliteration
 from errors import DictionaryBuildError
 from stats import StatsBuilder
 
@@ -88,7 +90,8 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
 
     if not input_files:
         raise DictionaryBuildError(
-            "no .txt files found (check meta.yaml 'folders' if content lives in subdirectories)",
+            "no .txt or .csv files found (check meta.yaml 'folders' if content lives in "
+            "subdirectories)",
             file=dict_dir)
 
     processed_output = {}
@@ -97,6 +100,13 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
         stats = StatsBuilder(track_frequency=count_frequency > 0)
 
     for file_path in input_files:
+        relative_path = str(file_path.relative_to(dict_dir))
+        if file_path.suffix == '.csv':
+            handler = table_input.TableInputHandler(
+                transliteration.Translator(), info=str(file_path))
+            processed_output[relative_path] = handler.process_file(file_path)
+            continue
+
         with open(file_path, 'r', encoding='utf-8') as f:
             file_content = f.read().strip().rstrip().replace('\r', '')
 
@@ -128,7 +138,6 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
         handler = input_handlers.HandlerFactory.getInputHandler(
             file_type, exclusion_list=book_exclusions, info=str(file_path))
 
-        relative_path = str(file_path.relative_to(dict_dir))
         processed_output[relative_path] = handler.process_stream(
             records_text, headers=headers, line_offset=n_header_lines)
 

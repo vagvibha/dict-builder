@@ -100,6 +100,16 @@ class BaseInputHandler:
         raw_content started (e.g. the file's HEADER: block), so error
         messages can report an absolute line number within the file.
         """
+        if not raw_content or not raw_content.strip():
+            return []
+
+        # 1. Common Orchestration: Split the stream using subclass strategy
+        return self.process_records(self.split_records(raw_content), headers, line_offset)
+
+    def process_records(self, records: list, headers: dict = None, line_offset: int = 0) -> list:
+        """Turns (line_no, record) pairs into entries. A record is whatever
+        the subclass's extract_record_parts() accepts (text for the text
+        formats; the table format passes its cells)."""
         if headers is None:
             headers = {}
         if 'skip' in headers:
@@ -111,16 +121,11 @@ class BaseInputHandler:
         if 'lang' in headers and headers['lang'] == 'en':
             suffix = False
 
-        if not raw_content or not raw_content.strip():
-            return []
-
-        # 1. Common Orchestration: Split the stream using subclass strategy
-        records = self.split_records(raw_content)
         processed_output = []
 
         for line_no, record in records:
             abs_line = line_no + line_offset
-            if not record.strip():
+            if isinstance(record, str) and not record.strip():
                 continue
 
             try:

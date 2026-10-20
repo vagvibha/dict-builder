@@ -27,7 +27,8 @@ Works with macOS's bash 3.2.
 ```
 contents/meta.yaml         what to build (below)
 contents/<id>/meta.yaml    one directory per local dictionary
-contents/<id>/*.txt        input files
+contents/<id>/*.txt        input files (text formats)
+contents/<id>/*.csv        input files (table format)
 stats/<id>.stats           written by the build; commit these
 masters/                   (convention) source data for converters, e.g. TSV exports
 external/                  fetched external sources   (gitignore)
@@ -79,13 +80,38 @@ directory has its own `meta.yaml` it is used; otherwise `defaults` is
 used, and `name` defaults to the id. Sources are always fetched at the
 latest commit of `ref`.
 
+`sheets:` (optional) lists Google Sheets tabs that `plan.py sync-sheets`
+downloads into the workspace as CSV. The build itself never downloads
+them: commit what the sync writes (the content repo's CI does this daily).
+
+```yaml
+sheets:
+  - path: contents/misc/words.csv     # relative to the workspace; .csv
+    url: https://docs.google.com/spreadsheets/d/<id>/edit?gid=123#gid=123
+  - path: contents/misc/other.csv
+    url: ...
+    fetch: false                      # keep the committed file (e.g. while the sheet is being fixed)
+```
+
+```bash
+# share each spreadsheet (Viewer) with the service account, then:
+GOOGLE_APPLICATION_CREDENTIALS=key.json python3 tools/scripts/plan.py sync-sheets
+# in CI: GOOGLE_SERVICE_ACCOUNT_JSON=<key file contents> (a repo secret)
+```
+
+Tabs are found by gid, so renaming one is fine. Files are tidied for
+stable diffs: Unicode NFC, trimmed cells, no empty trailing rows or
+columns, LF. Any file under the content directory must also be a valid
+table file. It's all or nothing: if any download or check fails, no file
+is written.
+
 ### `contents/<id>/meta.yaml`
 
 ```yaml
 name: Sahitya        # required; StarDict bookname (the .ifo file is <name lowercased>.ifo)
 type: shloka         # optional default for files without HEADER:type
 skip: [च, वा]        # optional; extra shloka exclusions for the whole dictionary
-folders: [kavya]     # optional; also read *.txt one level down in these subdirs
+folders: [kavya]     # optional; also read *.txt/*.csv one level down in these subdirs
 ```
 
 ## Input files
@@ -130,6 +156,26 @@ the `++` keys but leaves the `++` line out of the entry. `HEADER:shlokakey=BG,2,
 from the verse number, e.g. `॥३-२१॥` → `BG-03-21` (prefix, then a
 zero-pad width per level). Exclusions for verse words come from
 `scripts/config/exclusions.yaml`, meta.yaml `skip`, and `HEADER:skip`.
+
+### table (`.csv`)
+Any `.csv` file in a dictionary directory, e.g. a Google Sheets tab, which
+can sit next to that dictionary's `.txt` files.
+
+| row | contents |
+|---|---|
+| 1 | metadata as key/value pairs: `title`, `Dhatu notes`, `keys`, `Words`, `entry`, `Entry` |
+| 2 | column headers |
+| 3+ | one record per row |
+
+`keys` and `entry` (required) name the column with the lookup keys
+(`;`-separated, same key rules as above) and the column with the entry
+text. `title` and `lang` work like `HEADER:title` / `HEADER:lang`. Other
+columns are ignored, and their order doesn't matter. A row whose keys cell
+is empty is skipped. A row with keys but no entry is an error, and so is a
+spreadsheet error value (`#N/A`, `#REF!`, …) in either column. Line breaks
+in a cell become `<br>`, `**bold**` works, and the keys are shown at the
+end of the entry, as in `notes`. Errors give the file line the row starts
+on.
 
 ## Converters
 
