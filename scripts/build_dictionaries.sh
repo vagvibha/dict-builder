@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Builds every dictionary for a content workspace.
 #
-# Usage: build_dictionaries.sh [--workspace DIR]   (default: current dir)
+# Usage: build_dictionaries.sh [--workspace DIR] [--content-dir DIR]
+#   --workspace    default: current dir
+#   --content-dir  relative to the workspace; default: contents
 #
-# The workspace must contain content/meta.yaml (see plan.py for the
+# The workspace must contain <content-dir>/meta.yaml (see plan.py for the
 # format). Everything the build produces lives in the workspace:
 #   external/<source>/        fetched external sources (gitignore this)
 #   build/generated/<id>/     output of converters ('generated:')
@@ -24,18 +26,21 @@ CODE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS="${CODE_ROOT}/scripts"
 
 WORKSPACE="${PWD}"
+CONTENT_DIR="contents"
 while [ $# -gt 0 ]; do
     case "$1" in
         --workspace) WORKSPACE="$2"; shift 2 ;;
+        --content-dir) CONTENT_DIR="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 
-if [ ! -f "${WORKSPACE}/content/meta.yaml" ]; then
-    echo "❌ ${WORKSPACE}/content/meta.yaml not found - is --workspace right?" >&2
+if [ ! -f "${WORKSPACE}/${CONTENT_DIR}/meta.yaml" ]; then
+    echo "❌ ${WORKSPACE}/${CONTENT_DIR}/meta.yaml not found - are --workspace / --content-dir right?" >&2
     exit 2
 fi
+PLAN_ARGS=(--workspace "${WORKSPACE}" --content-dir "${CONTENT_DIR}")
 
 BUILD_DIR="${WORKSPACE}/build"
 STARDICT_DIR="${BUILD_DIR}/stardict"
@@ -46,16 +51,16 @@ rm -rf "${STARDICT_DIR}"
 mkdir -p "${BUILD_DIR}" "${STARDICT_DIR}" "${STATS_DIR}"
 
 if [ "${SKIP_FETCH:-0}" != "1" ]; then
-    python3 "${SCRIPTS}/plan.py" fetch --workspace "${WORKSPACE}" \
+    python3 "${SCRIPTS}/plan.py" fetch "${PLAN_ARGS[@]}" \
         --sources-file "${BUILD_DIR}/sources.txt"
 fi
 
-# Dictionaries produced by converters (content/meta.yaml 'generated:').
-python3 "${SCRIPTS}/plan.py" generate --workspace "${WORKSPACE}"
+# Dictionaries produced by converters (<content-dir>/meta.yaml 'generated:').
+python3 "${SCRIPTS}/plan.py" generate "${PLAN_ARGS[@]}"
 
 # "<id>\t<dir>\t<meta-defaults-json>" per dictionary. Parallel arrays and a
 # plain read loop (no mapfile / assoc arrays) - macOS ships bash 3.2.
-plan="$(python3 "${SCRIPTS}/plan.py" list --workspace "${WORKSPACE}")"
+plan="$(python3 "${SCRIPTS}/plan.py" list "${PLAN_ARGS[@]}")"
 ids=(); dirs=(); defaults=()
 while IFS=$'\t' read -r id dir meta; do
     if [ -n "${id}" ]; then ids+=("${id}"); dirs+=("${dir}"); defaults+=("${meta}"); fi

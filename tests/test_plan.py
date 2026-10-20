@@ -26,7 +26,7 @@ class _Workspace(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.ws = Path(self._tmp.name)
-        self.content = self.ws / "content"
+        self.content = self.ws / "contents"
         self.external = self.ws / "external"
 
     def tearDown(self):
@@ -166,7 +166,7 @@ class TestGenerated(_Workspace):
             build_plan(self.content, self.external, gen_dir)   # not generated yet
 
         write(gen_dir / "ak/stale.txt", "old")
-        self.assertEqual(generate(self.ws, gen_dir), ["ak"])
+        self.assertEqual(generate(self.ws, self.content, gen_dir), ["ak"])
         self.assertEqual(sorted(p.name for p in (gen_dir / "ak").iterdir()), ["ak.txt"])
 
         plan = build_plan(self.content, self.external, gen_dir)
@@ -176,7 +176,7 @@ class TestGenerated(_Workspace):
     def test_generate_failure(self):
         self.config(self.GEN)   # masters missing
         with self.assertRaises(DictionaryBuildError) as ctx:
-            generate(self.ws, self.ws / "build/generated")
+            generate(self.ws, self.content, self.ws / "build/generated")
         self.assertIn("amarakosha_tsv_to_notes", str(ctx.exception))
 
 

@@ -12,7 +12,7 @@ pip install -r requirements.txt        # pyglossary, pyyaml
 # plus dictzip: `brew install dictzip` / `apt-get install dictzip`
 
 # from the content workspace root:
-bash tools/scripts/build_dictionaries.sh            # or --workspace DIR
+bash tools/scripts/build_dictionaries.sh            # or --workspace DIR, --content-dir DIR
 # offline / reuse already-fetched external sources:
 SKIP_FETCH=1 bash tools/scripts/build_dictionaries.sh
 
@@ -25,9 +25,9 @@ Works with macOS's bash 3.2.
 ## Workspace layout
 
 ```
-content/meta.yaml          what to build (below)
-content/<id>/meta.yaml     one directory per local dictionary
-content/<id>/*.txt         input files
+contents/meta.yaml         what to build (below)
+contents/<id>/meta.yaml    one directory per local dictionary
+contents/<id>/*.txt        input files
 stats/<id>.stats           written by the build; commit these
 masters/                   (convention) source data for converters, e.g. TSV exports
 external/                  fetched external sources   (gitignore)
@@ -39,10 +39,13 @@ build/                     build output               (gitignore)
 dictionaries/              previously published copy  (gitignore; see Versioning)
 ```
 
-### `content/meta.yaml`
+The content directory is `contents/` unless `--content-dir` (relative to
+the workspace) says otherwise; the rest of this README writes `contents/`.
+
+### `contents/meta.yaml`
 
 ```yaml
-dictionaries:              # local: content/<id>/
+dictionaries:              # local: contents/<id>/
   - sahitya
 sources:                   # optional: dictionaries maintained in other repos
   - name: repoA            # fetched into external/repoA
@@ -76,7 +79,7 @@ directory has its own `meta.yaml` it is used; otherwise `defaults` is
 used, and `name` defaults to the id. Sources are always fetched at the
 latest commit of `ref`.
 
-### `content/<id>/meta.yaml`
+### `contents/<id>/meta.yaml`
 
 ```yaml
 name: Sahitya        # required; StarDict bookname (the .ifo file is <name lowercased>.ifo)

@@ -211,9 +211,9 @@ class TestBuildScript(_TempDirTest):
     def setUp(self):
         super().setUp()
         self.ws = self.root / "ws"
-        write(self.ws / "content/meta.yaml", "dictionaries:\n  - test\n")
-        write(self.ws / "content/test/meta.yaml", "name: Test\n")
-        write(self.ws / "content/test/a.txt", SHLOKA_FILE)
+        write(self.ws / "contents/meta.yaml", "dictionaries:\n  - test\n")
+        write(self.ws / "contents/test/meta.yaml", "name: Test\n")
+        write(self.ws / "contents/test/a.txt", SHLOKA_FILE)
 
     def run_build(self, *extra, env=None):
         return subprocess.run(
@@ -246,7 +246,7 @@ class TestBuildScript(_TempDirTest):
             self.assertEqual(f.read_bytes(), (self.ws / "dictionaries/test" / f.name).read_bytes())
 
         # Content change: new version.
-        with open(self.ws / "content/test/a.txt", "a", encoding="utf-8") as f:
+        with open(self.ws / "contents/test/a.txt", "a", encoding="utf-8") as f:
             f.write("\nनवः श्लोकः ॥३॥\n====\n+ नव\n")
         self.assertEqual(self.build(), ["test"])
         self.assertFalse(same_dictionary(self.ws / "dictionaries/test", out))
@@ -259,7 +259,7 @@ class TestBuildScript(_TempDirTest):
             # no kavya/meta.yaml: name + type come from the source's defaults
             "dict/kavya/k.txt": NOTES_FILE,
         })
-        write(self.ws / "content/meta.yaml",
+        write(self.ws / "contents/meta.yaml",
               "dictionaries:\n  - test\n"
               f"sources:\n  - name: repoA\n    repo: {upstream}\n    suffix: -repoA-Nick\n"
               "    defaults: {type: notes}\n")
@@ -282,7 +282,7 @@ class TestBuildScript(_TempDirTest):
         from tests.test_converters import SHLOKAS_TSV, WORDS_TSV
         write(self.ws / "masters/ak/words.tsv", WORDS_TSV)
         write(self.ws / "masters/ak/shlokas.tsv", SHLOKAS_TSV)
-        write(self.ws / "content/meta.yaml",
+        write(self.ws / "contents/meta.yaml",
               "dictionaries:\n  - test\n"
               "generated:\n  - id: amarakosha\n    converter: amarakosha_tsv_to_notes\n"
               "    args: [--words, masters/ak/words.tsv, --shlokas, masters/ak/shlokas.tsv]\n"
@@ -305,16 +305,23 @@ class TestBuildScript(_TempDirTest):
         self.assertTrue((self.ws / "stats/test.stats").exists())
 
     def test_bad_dictionary_list_fails(self):
-        write(self.ws / "content/meta.yaml", "dictionaries:\n  - nosuch\n")
+        write(self.ws / "contents/meta.yaml", "dictionaries:\n  - nosuch\n")
         res = self.run_build()
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("nosuch", res.stderr)
 
+    def test_content_dir_option(self):
+        shutil.move(str(self.ws / "contents"), str(self.ws / "other"))
+        self.assertEqual(self.run_build().returncode, 2)
+        res = self.run_build("--content-dir", "other")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertTrue((self.ws / "build/stardict/test/test.ifo").exists())
+
     def test_missing_workspace_config(self):
-        (self.ws / "content/meta.yaml").unlink()
+        (self.ws / "contents/meta.yaml").unlink()
         res = self.run_build()
         self.assertEqual(res.returncode, 2)
-        self.assertIn("content/meta.yaml not found", res.stderr)
+        self.assertIn("contents/meta.yaml not found", res.stderr)
 
 
 if __name__ == "__main__":

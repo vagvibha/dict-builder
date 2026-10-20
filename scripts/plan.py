@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Works out *what* to build for a content workspace.
 
-A workspace is a directory with content/meta.yaml:
+A workspace is a directory with <content-dir>/meta.yaml (default
+contents/meta.yaml; --content-dir, relative to the workspace):
 
-    dictionaries:            # local dictionaries: content/<id>/
+    dictionaries:            # local dictionaries: <content-dir>/<id>/
       - sahitya
     sources:                 # optional: dictionaries maintained in other repos
       - name: repoA          # checkout dir: <workspace>/external/repoA
@@ -21,7 +22,7 @@ A workspace is a directory with content/meta.yaml:
                --shlokas, masters/amarakosha/shlokas.tsv]  # workspace root
         meta: {name: Amarakosha}   # optional; defaults: name=<id>, type=notes
 
-The source's manifest uses the same format as content/meta.yaml
+The source's manifest uses the same format as <content-dir>/meta.yaml
 ('dictionaries:' list, relative to the manifest's own directory), so the
 source repo decides what it offers and how it is laid out. Any 'sources:'
 in a source's manifest is ignored (no nesting).
@@ -33,6 +34,7 @@ Subcommands:
     plan.py fetch --workspace W   clone/update every source (latest of ref)
     plan.py generate --workspace W   run every converter in 'generated:'
     plan.py list  --workspace W   print "<id>\\t<dir>\\t<meta-defaults-json>" lines
+All take --content-dir DIR (default: contents).
 """
 import argparse
 import json
@@ -47,6 +49,7 @@ import yaml
 from errors import DictionaryBuildError
 from utils import KNOWN_TYPES
 
+DEFAULT_CONTENT_DIR = "contents"
 ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 DEFAULT_MANIFEST = "dict/meta.yaml"
 SOURCE_KEYS = {"name", "repo", "ref", "manifest", "suffix", "dictionaries", "defaults"}
@@ -70,7 +73,7 @@ def _string_list(value, what, path) -> list:
 
 
 def load_workspace_config(content_dir: Path) -> dict:
-    """Parses and validates content/meta.yaml.
+    """Parses and validates <content_dir>/meta.yaml.
     Returns {'dictionaries': [...], 'sources': [ {...normalized...} ]}."""
     meta_path = content_dir / "meta.yaml"
     if not meta_path.exists():
@@ -245,10 +248,10 @@ def fetch_sources(content_dir: Path, external_dir: Path) -> list:
     return fetched
 
 
-def generate(workspace: Path, generated_dir: Path) -> list:
+def generate(workspace: Path, content_dir: Path, generated_dir: Path) -> list:
     """Runs every converter in 'generated:' into generated_dir/<id>/<id>.txt.
     Returns the ids generated."""
-    cfg = load_workspace_config(workspace / "content")
+    cfg = load_workspace_config(content_dir)
     done = []
     for gen in cfg["generated"]:
         out_dir = generated_dir / gen["id"]
@@ -273,11 +276,14 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["fetch", "generate", "list"])
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--content-dir", type=Path, default=Path(DEFAULT_CONTENT_DIR),
+                        help="content directory, relative to the workspace "
+                             f"(default: {DEFAULT_CONTENT_DIR})")
     parser.add_argument("--sources-file", type=Path,
                         help="fetch: also write '<name> <repo> <sha>' lines here")
     args = parser.parse_args()
 
-    content_dir = args.workspace / "content"
+    content_dir = args.workspace / args.content_dir
     external_dir = args.workspace / "external"
     generated_dir = args.workspace / "build" / "generated"
     try:
@@ -288,7 +294,7 @@ def main():
                 args.sources_file.write_text(
                     "".join(f"{n} {r} {s}\n" for n, r, s in fetched), encoding="utf-8")
         elif args.command == "generate":
-            generate(args.workspace, generated_dir)
+            generate(args.workspace, content_dir, generated_dir)
         else:
             for e in build_plan(content_dir, external_dir, generated_dir):
                 print(f"{e['id']}\t{e['dir']}\t{json.dumps(e['meta_defaults'] or {}, ensure_ascii=False)}")
