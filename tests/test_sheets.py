@@ -20,15 +20,19 @@ TABLE = [["title", "T", "keys", "Words", "entry", "Entry", ""],
 
 
 class FakeClient:
+    """tabs: {gid: rows or exception}; tab names are 'Tab<gid>'."""
+
     def __init__(self, tabs):
         self.tabs, self.calls = tabs, []
 
-    def fetch(self, url):
+    def fetch(self, url, tab=None):
         self.calls.append(url)
-        value = self.tabs[sheets.parse_url(url)[1]]
+        _, gid = sheets.parse_url(url)
+        title = sheets.resolve_tab({g: f"Tab{g}" for g in self.tabs}, gid, tab)
+        value = self.tabs[int(title[3:])]
         if isinstance(value, Exception):
             raise value
-        return value
+        return value, title
 
 
 class _Ws(unittest.TestCase):
@@ -50,7 +54,22 @@ class _Ws(unittest.TestCase):
 class TestHelpers(unittest.TestCase):
     def test_parse_url(self):
         self.assertEqual(sheets.parse_url(URL.format(gid=7)), ("SID", 7))
-        self.assertIsNone(sheets.parse_url("https://docs.google.com/spreadsheets/d/SID/edit"))
+        self.assertEqual(sheets.parse_url("https://docs.google.com/spreadsheets/d/SID/edit"),
+                         ("SID", None))
+        self.assertIsNone(sheets.parse_url("https://example.com/x"))
+
+    def test_resolve_tab(self):
+        titles = {0: "Words", 7: "Other"}
+        self.assertEqual(sheets.resolve_tab(titles, 7, None), "Other")
+        self.assertEqual(sheets.resolve_tab(titles, 7, "Other"), "Other")
+        self.assertEqual(sheets.resolve_tab(titles, None, "Words"), "Words")
+        for gid, tab, msg in ((9, None, "no tab with gid=9"),
+                              (7, "Words", "named 'Other', but the config says 'tab: Words'"),
+                              (None, "Nope", "no tab named 'Nope'")):
+            with self.subTest(gid=gid, tab=tab):
+                with self.assertRaises(DictionaryBuildError) as ctx:
+                    sheets.resolve_tab(titles, gid, tab)
+                self.assertIn(msg, str(ctx.exception))
 
     def test_tidy(self):
         self.assertEqual(sheets.tidy(TABLE),
@@ -68,9 +87,12 @@ class TestConfig(_Ws):
 
     def test_ok(self):
         out = self.load("- {path: contents/a/x.csv, url: '" + URL.format(gid=1) + "'}\n"
-                        "- {path: masters/y.csv, url: '" + URL.format(gid=2) + "', fetch: false}\n")
-        self.assertEqual([(s["rel"], s["fetch"]) for s in out],
-                         [("contents/a/x.csv", True), ("masters/y.csv", False)])
+                        "- {path: masters/y.csv, url: '" + URL.format(gid=2) + "', fetch: false}\n"
+                        "- {path: z.csv, url: 'https://docs.google.com/spreadsheets/d/S/edit', "
+                        "tab: Words}\n")
+        self.assertEqual([(s["rel"], s["tab"], s["fetch"]) for s in out],
+                         [("contents/a/x.csv", None, True), ("masters/y.csv", None, False),
+                          ("z.csv", "Words", True)])
         self.assertEqual(out[0]["path"], (self.ws / "contents/a/x.csv").resolve())
 
     def test_errors(self):
@@ -79,8 +101,10 @@ class TestConfig(_Ws):
             "not csv": f"- {{path: a.tsv, url: '{u}'}}\n",
             "outside": f"- {{path: ../a.csv, url: '{u}'}}\n",
             "absolute": f"- {{path: /tmp/a.csv, url: '{u}'}}\n",
-            "no gid": "- {path: a.csv, url: 'https://docs.google.com/spreadsheets/d/S/edit'}\n",
-            "unknown key": f"- {{path: a.csv, url: '{u}', tab: x}}\n",
+            "no gid or tab": "- {path: a.csv, url: 'https://docs.google.com/spreadsheets/d/S/edit'}\n",
+            "not a sheet": "- {path: a.csv, url: 'https://example.com/x', tab: T}\n",
+            "empty tab": f"- {{path: a.csv, url: '{u}', tab: ''}}\n",
+            "unknown key": f"- {{path: a.csv, url: '{u}', sheet: x}}\n",
             "dup": f"- {{path: a.csv, url: '{u}'}}\n- {{path: ./a.csv, url: '{u}'}}\n",
             "bad fetch": f"- {{path: a.csv, url: '{u}', fetch: 'no'}}\n",
             "not list": "a: 1\n",
@@ -103,6 +127,22 @@ class TestSync(_Ws):
         self.assertEqual((self.ws / "masters/raw.csv").read_text(), "a,b\n1,2\n")
         # unchanged second time: nothing written
         self.assertEqual(sync_sheets(self.ws, self.content, client), [])
+
+    def test_tab_names(self):
+        self.config("sheets:\n" + self.entry("contents/misc/w.csv", 1, "    tab: Tab1\n")
+                    + "  - path: masters/raw.csv\n"
+                      "    url: https://docs.google.com/spreadsheets/d/SID/edit\n"
+                      "    tab: Tab2\n")
+        logs = []
+        plan.sync_sheets(self.ws, self.content, FakeClient({1: TABLE, 2: [["a"]]}),
+                         log=logs.append)
+        self.assertEqual(logs, ["updated  contents/misc/w.csv (tab 'Tab1', 1 entries)",
+                                "updated  masters/raw.csv (tab 'Tab2', 1 lines)"])
+        # renamed in the config (or the sheet): the sync fails, nothing written
+        self.config("sheets:\n" + self.entry("contents/misc/w.csv", 1, "    tab: Renamed\n"))
+        with self.assertRaises(DictionaryBuildError) as ctx:
+            sync_sheets(self.ws, self.content, FakeClient({1: TABLE}))
+        self.assertIn("named 'Tab1', but the config says 'tab: Renamed'", str(ctx.exception))
 
     def test_all_or_nothing(self):
         self.config("sheets:\n" + self.entry("contents/misc/a.csv", 1)

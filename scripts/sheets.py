@@ -4,13 +4,17 @@
     sheets:
       - path: contents/misc/words.csv     # relative to the workspace; must be .csv
         url: https://docs.google.com/spreadsheets/d/<id>/edit?gid=123#gid=123
+        tab: Words                        # the tab's name in the sheet
       - path: contents/misc/other.csv
-        url: ...
+        url: https://docs.google.com/spreadsheets/d/<id>/edit
+        tab: Other                        # no gid in the url: found by name
         fetch: false                      # keep the committed file as it is
 
 The spreadsheets stay private: each one is shared (Viewer) with a Google
 service account, and tabs are read through the Sheets API as that account.
-The tab is found by its gid, so renaming a tab is fine. Credentials:
+Which tab: the url's #gid=, the 'tab' name, or both. With both, they
+must agree (the tab is checked to still have that name), so renaming a
+tab in the sheet fails the sync until the config is updated. Credentials:
   GOOGLE_SERVICE_ACCOUNT_JSON     the key file's contents (GitHub Actions secret)
   GOOGLE_APPLICATION_CREDENTIALS  a path to the key file (handy locally)
 Values are read as formatted, i.e. as shown in the sheet.
@@ -37,15 +41,16 @@ from errors import DictionaryBuildError
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 API = "https://sheets.googleapis.com/v4/spreadsheets"
-SHEET_KEYS = {"path", "url", "fetch"}
+SHEET_KEYS = {"path", "url", "tab", "fetch"}
 
 
 def parse_url(url: str):
+    """-> (spreadsheet id, gid or None), or None if there's no spreadsheet id."""
     m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", url)
-    g = re.search(r"[#&?]gid=(\d+)", url)
-    if not m or not g:
+    if not m:
         return None
-    return m.group(1), int(g.group(1))
+    g = re.search(r"[#&?]gid=(\d+)", url)
+    return m.group(1), int(g.group(1)) if g else None
 
 
 def load_sheets_config(raw: list, workspace: Path, meta_path: Path) -> list:
@@ -74,15 +79,24 @@ def load_sheets_config(raw: list, workspace: Path, meta_path: Path) -> list:
             raise DictionaryBuildError(f"{where}: path {rel!r} listed twice", file=meta_path)
         seen.add(path)
         url = str(item.get("url") or "").strip()
-        if not parse_url(url):
+        parsed = parse_url(url)
+        if not parsed:
             raise DictionaryBuildError(
-                f"{where} ({rel}): 'url' must be a tab URL with the spreadsheet id and "
+                f"{where} ({rel}): 'url' must be a Google Sheets URL "
+                "(https://docs.google.com/spreadsheets/d/<id>/...)", file=meta_path)
+        tab = item.get("tab")
+        tab = str(tab).strip() if tab is not None else None
+        if tab == "":
+            raise DictionaryBuildError(f"{where} ({rel}): 'tab' is empty", file=meta_path)
+        if parsed[1] is None and tab is None:
+            raise DictionaryBuildError(
+                f"{where} ({rel}): say which tab: give 'tab' (its name), or a url with "
                 "#gid=... (open the tab and copy the address bar)", file=meta_path)
         fetch = item.get("fetch", True)
         if not isinstance(fetch, bool):
             raise DictionaryBuildError(f"{where} ({rel}): 'fetch' must be true or false",
                                        file=meta_path)
-        out.append({"path": path, "rel": rel, "url": url, "fetch": fetch})
+        out.append({"path": path, "rel": rel, "url": url, "tab": tab, "fetch": fetch})
     return out
 
 
@@ -138,19 +152,42 @@ class SheetsClient:
         r.raise_for_status()
         return r.json()
 
-    def fetch(self, url: str) -> list:
-        sid, gid = parse_url(url)
+    def tab_titles(self, sid: str) -> dict:
+        """{gid: tab title} for a spreadsheet."""
         if sid not in self.titles:
             meta = self._get(f"{API}/{sid}", fields="sheets.properties(sheetId,title)")
             self.titles[sid] = {t["properties"]["sheetId"]: t["properties"]["title"]
                                 for t in meta["sheets"]}
-        if gid not in self.titles[sid]:
-            raise DictionaryBuildError(
-                f"no tab with gid={gid} in that spreadsheet (was it deleted or re-created?)")
-        rng = "'" + self.titles[sid][gid].replace("'", "''") + "'"
+        return self.titles[sid]
+
+    def fetch(self, url: str, tab: str = None):
+        """-> (rows, tab title)."""
+        sid, gid = parse_url(url)
+        title = resolve_tab(self.tab_titles(sid), gid, tab)
+        rng = "'" + title.replace("'", "''") + "'"
         data = self._get(f"{API}/{sid}/values/{rng}",
                          valueRenderOption="FORMATTED_VALUE", majorDimension="ROWS")
-        return data.get("values", [])
+        return data.get("values", []), title
+
+
+def resolve_tab(titles: dict, gid, tab) -> str:
+    """Picks the tab title from {gid: title} by gid and/or name; with both,
+    they must agree."""
+    names = ", ".join(repr(t) for t in titles.values())
+    if gid is not None:
+        if gid not in titles:
+            raise DictionaryBuildError(
+                f"no tab with gid={gid} in that spreadsheet (deleted or re-created?); "
+                f"tabs: {names}")
+        if tab is not None and titles[gid] != tab:
+            raise DictionaryBuildError(
+                f"tab gid={gid} is named {titles[gid]!r}, but the config says 'tab: {tab}' "
+                "(renamed in the sheet? update one of them)")
+        return titles[gid]
+    matches = [t for t in titles.values() if t == tab]
+    if not matches:
+        raise DictionaryBuildError(f"no tab named {tab!r} in that spreadsheet; tabs: {names}")
+    return tab
 
 
 def validate_table(path: Path, text: str) -> int:
@@ -178,13 +215,14 @@ def sync(sheets: list, content_dir: Path, client=None, log=print) -> list:
     results, failed = [], []
     for s in todo:
         try:
-            text = tidy(client.fetch(s["url"]))
+            rows, title = client.fetch(s["url"], s["tab"])
+            text = tidy(rows)
             if not text:
                 raise DictionaryBuildError("the tab is empty")
             detail = f"{text.count(chr(10))} lines"
             if content in s["path"].parents:
                 detail = f"{validate_table(s['path'], text)} entries"
-            results.append((s, text, detail))
+            results.append((s, text, f"tab {title!r}, {detail}"))
         except DictionaryBuildError as e:
             failed.append(f"{s['rel']}: {e}")
         except Exception as e:   # network / API errors

@@ -95,8 +95,10 @@ them: commit what the sync writes (the content repo's CI does this daily).
 sheets:
   - path: contents/misc/words.csv     # relative to the workspace; .csv
     url: https://docs.google.com/spreadsheets/d/<id>/edit?gid=123#gid=123
+    tab: Words                        # optional with a gid; checked against the sheet
   - path: contents/misc/other.csv
-    url: ...
+    url: https://docs.google.com/spreadsheets/d/<id>/edit   # no gid:
+    tab: Other                                               # found by name
     fetch: false                      # keep the committed file (e.g. while the sheet is being fixed)
 ```
 
@@ -106,7 +108,9 @@ GOOGLE_APPLICATION_CREDENTIALS=key.json python3 tools/scripts/plan.py sync-sheet
 # in CI: GOOGLE_SERVICE_ACCOUNT_JSON=<key file contents> (a repo secret)
 ```
 
-Tabs are found by gid, so renaming one is fine. Files are tidied for
+The tab is picked by the url's `#gid=`, by `tab` (its name), or both.
+With both, they must agree, so a tab renamed in the sheet fails the sync
+until the config is updated. Files are tidied for
 stable diffs: Unicode NFC, trimmed cells, no empty trailing rows or
 columns, LF. Any file under the content directory must also be a valid
 table file. It's all or nothing: if any download or check fails, no file
