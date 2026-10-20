@@ -279,24 +279,46 @@ class TestBuildScript(_TempDirTest):
         self.assertFalse((self.ws / "build/sources.txt").exists())
 
     def test_generated(self):
-        from tests.test_converters import SHLOKAS_TSV, WORDS_TSV
-        write(self.ws / "masters/ak/words.tsv", WORDS_TSV)
-        write(self.ws / "masters/ak/shlokas.tsv", SHLOKAS_TSV)
+        from tests.test_amarakosha import write_data
+        write_data(self.ws / "external/kosha/ak")
         write(self.ws / "contents/meta.yaml",
               "dictionaries:\n  - test\n"
-              "generated:\n  - id: amarakosha\n    converter: amarakosha_tsv_to_notes\n"
-              "    args: [--words, masters/ak/words.tsv, --shlokas, masters/ak/shlokas.tsv]\n"
+              "generated:\n  - id: amarakosha\n    converter: amarakosha_to_notes\n"
+              "    args: [--data, external/kosha/ak]\n"
               "    meta: {name: Amarakosha}\n")
-        self.assertEqual(self.build(), ["test", "amarakosha"])
+        env = _env_with_current_python()
+        env["SKIP_FETCH"] = "1"
+        res = self.run_build(env=env)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual((self.ws / "build/changed_dictionaries.txt").read_text().split(),
+                         ["test", "amarakosha"])
         self.assertTrue((self.ws / "build/stardict/amarakosha/amarakosha.ifo").exists())
         self.assertEqual((self.ws / "stats/amarakosha.stats").read_text(encoding="utf-8"),
                          "amarakosha.txt: 10, 10\nTOTAL: 10, 10 (synonly: 0)\n")
 
-        # A data error in the masters stops the build.
-        write(self.ws / "masters/ak/shlokas.tsv", "संख्या\tश्लोकः\n")
-        res = self.run_build()
+        # A data error in the inputs stops the build.
+        write(self.ws / "external/kosha/ak/shlokas.csv", "संख्या,श्लोकः\n")
+        res = self.run_build(env=env)
         self.assertNotEqual(res.returncode, 0)
-        self.assertIn("shlokas.tsv:1", res.stderr)
+        self.assertIn("no verses", res.stderr)
+
+    def test_data_only_sparse_source(self):
+        from tests.test_amarakosha import FILES
+        from tests.test_plan import make_git_repo
+        import amarakosha_to_notes as ak
+        upstream = self.root / "kosha"
+        make_git_repo(upstream, {**{f"data/amarakosha/{ak.DEFAULT_FILES[t]}": text
+                                    for t, text in FILES.items()},
+                                 "data/other/big.csv": "x"})
+        write(self.ws / "contents/meta.yaml",
+              "dictionaries:\n  - test\n"
+              f"sources:\n  - name: kosha\n    repo: file://{upstream}\n    build: false\n"
+              "    sparse: [data/amarakosha]\n"
+              "generated:\n  - id: amarakosha\n    converter: amarakosha_to_notes\n"
+              "    args: [--data, external/kosha/data/amarakosha]\n")
+        self.assertEqual(self.build(), ["test", "amarakosha"])
+        self.assertFalse((self.ws / "external/kosha/data/other").exists())
+        self.assertIn("kosha file://", (self.ws / "build/sources.txt").read_text())
 
     def test_stale_stats_removed(self):
         write(self.ws / "stats/gone.stats", "old")

@@ -30,7 +30,6 @@ contents/<id>/meta.yaml    one directory per local dictionary
 contents/<id>/*.txt        input files (text formats)
 contents/<id>/*.csv        input files (table format)
 stats/<id>.stats           written by the build; commit these
-masters/                   (convention) source data for converters, e.g. TSV exports
 external/                  fetched external sources   (gitignore)
 build/                     build output               (gitignore)
   generated/<id>/          converter output ('generated:')
@@ -56,6 +55,10 @@ sources:                   # optional: dictionaries maintained in other repos
     suffix: -repoA-Nick    # optional; default "-<name>"
     dictionaries: [kavya]  # optional; used only if the manifest is missing
     defaults: {type: notes}    # optional; meta for dirs without meta.yaml
+  - name: kosha            # data-only: fetched for converters, nothing built
+    repo: https://github.com/vagvibha/kosha.git
+    build: false
+    sparse: [data/amarakosha]  # optional: partial clone, only these folders
 ```
 
 `generated:` (optional) lists dictionaries produced by a converter on
@@ -65,12 +68,16 @@ directory and gets `--output build/generated/<id>/<id>.txt` appended:
 ```yaml
 generated:
   - id: amarakosha
-    converter: amarakosha_tsv_to_notes          # scripts/converters/<name>.py
-    args: [--words, masters/amarakosha/words.tsv,
-           --shlokas, masters/amarakosha/shlokas.tsv,
-           --config, masters/amarakosha/amarakosha.yaml]   # --config optional
+    converter: amarakosha_to_notes              # scripts/converters/<name>.py
+    args: [--data, external/kosha/data/amarakosha,
+           --config, config/amarakosha.yaml]    # --config optional
     meta: {name: Amarakosha}                    # optional; default name=<id>, type=notes
 ```
+
+A converter usually reads a **data-only source** (`build: false`): it is
+fetched like any other source (latest of `ref`, recorded in
+`build/sources.txt`, skipped with `SKIP_FETCH=1`), but needs no manifest
+and no dictionary is built from it directly.
 
 A source's **manifest** has the same format as the `dictionaries:` list
 above, relative to the manifest's directory, so the source repo decides
@@ -184,14 +191,18 @@ other shape (spreadsheet exports etc.) into one of the input formats above.
 Each takes `--output FILE`, exits 2 with a `file:line` message on a data
 problem, and can be run by hand or from `generated:`.
 
-**`amarakosha_tsv_to_notes.py`** reads the Amarakosha `words` and `shlokas`
-TSV exports and writes one `notes` file: an entry per verse (key
-`AK-1-05-001`, its words grouped by meaning, Prev/Next links) and an entry
-per word (details, all words of the same meaning, its verse). Columns are
-found by header name, set in `converters/config/amarakosha.yaml` (pass your
-own copy with `--config`). Every `bword://` link must point at a key in the
-output, otherwise it's an error. `--debug --varga 1।05` converts one varga
-and turns those errors into warnings, for checking output.
+**`amarakosha_to_notes.py`** reads the Amarakosha master data from
+[kosha](https://github.com/vagvibha/kosha) (`data/amarakosha`: `words`,
+`shlokas`, `sudha`, `ks_words` and `vargas` CSVs; `--data DIR`, or each
+file on its own) and writes one `notes` file. It has an entry per verse
+(key `AK-1-05-001`, its words grouped by meaning, Prev/Next links) and an
+entry per word (details, सुधा and क्षीरस्वामी commentary joined by
+`sudha_id`/`ks_id`, all words of the same अर्थः, its verse and varga). Columns
+are found by header name, set in `converters/config/amarakosha.yaml` (pass
+your own copy with `--config`). A link to a key not in the output, or a
+commentary id or varga that isn't in its file, is an error.
+`--debug --varga 1.05` converts one varga and turns those errors into
+warnings, for checking output.
 
 ## Versioning
 

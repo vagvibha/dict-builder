@@ -15,11 +15,15 @@ contents/meta.yaml; --content-dir, relative to the workspace):
         dictionaries: [kavya]      # optional; only used if the manifest is missing
         defaults:            # optional meta for dictionaries with no meta.yaml
           type: notes
+      - name: kosha          # data-only: fetched for converters, nothing built
+        repo: https://github.com/vagvibha/kosha.git
+        build: false
+        sparse: [data/amarakosha]  # optional: check out only these folders
     generated:               # optional: dictionaries produced by a converter
       - id: amarakosha       # output: <workspace>/build/generated/<id>/<id>.txt
-        converter: amarakosha_tsv_to_notes   # scripts/converters/<name>.py
-        args: [--words, masters/amarakosha/words.tsv,   # relative to the
-               --shlokas, masters/amarakosha/shlokas.tsv]  # workspace root
+        converter: amarakosha_to_notes   # scripts/converters/<name>.py
+        args: [--data, external/kosha/data/amarakosha]   # relative to the
+                                                         # workspace root
         meta: {name: Amarakosha}   # optional; defaults: name=<id>, type=notes
 
 The source's manifest uses the same format as <content-dir>/meta.yaml
@@ -53,7 +57,8 @@ from utils import KNOWN_TYPES
 DEFAULT_CONTENT_DIR = "contents"
 ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 DEFAULT_MANIFEST = "dict/meta.yaml"
-SOURCE_KEYS = {"name", "repo", "ref", "manifest", "suffix", "dictionaries", "defaults"}
+SOURCE_KEYS = {"name", "repo", "ref", "manifest", "suffix", "dictionaries", "defaults",
+               "build", "sparse"}
 GENERATED_KEYS = {"id", "converter", "args", "meta"}
 CONVERTER_RE = re.compile(r'^[a-z0-9_]+$')
 CONVERTERS_DIR = Path(__file__).resolve().parent / "converters"
@@ -104,6 +109,19 @@ def load_workspace_config(content_dir: Path) -> dict:
         if defaults.get("type") is not None and defaults["type"] not in KNOWN_TYPES:
             raise DictionaryBuildError(
                 f"{where} ({name}): unknown default type '{defaults['type']}'", file=meta_path)
+        build = src.get("build", True)
+        if not isinstance(build, bool):
+            raise DictionaryBuildError(f"{where} ({name}): 'build' must be true or false",
+                                       file=meta_path)
+        sparse = src.get("sparse")
+        if sparse is not None:
+            sparse = _string_list(sparse, f"{where}.sparse", meta_path)
+            for path in sparse:
+                parts = Path(path).parts
+                if not path or Path(path).is_absolute() or ".." in parts:
+                    raise DictionaryBuildError(
+                        f"{where} ({name}): sparse path {path!r} must be relative, inside "
+                        "the repo", file=meta_path)
         sources.append({
             "name": name,
             "repo": str(src["repo"]),
@@ -113,6 +131,8 @@ def load_workspace_config(content_dir: Path) -> dict:
             "dictionaries": (_string_list(src["dictionaries"], f"{where}.dictionaries", meta_path)
                              if src.get("dictionaries") else None),
             "defaults": defaults,
+            "build": build,
+            "sparse": sparse,
         })
 
     generated = []
@@ -179,6 +199,8 @@ def build_plan(content_dir: Path, external_dir: Path, generated_dir: Path = None
                      "source": None})
 
     for src in cfg["sources"]:
+        if not src["build"]:
+            continue   # data-only: read by converters
         root = external_dir / src["name"]
         if not root.is_dir():
             raise DictionaryBuildError(
@@ -227,8 +249,9 @@ def _git(*args, cwd=None) -> str:
 
 
 def fetch_sources(content_dir: Path, external_dir: Path) -> list:
-    """Shallow-clones/updates every source to the latest commit of its ref.
-    Returns [(name, repo, sha)]."""
+    """Shallow-clones/updates every source to the latest commit of its ref
+    (data-only ones too). With 'sparse', a partial clone that checks out
+    only those folders. Returns [(name, repo, sha)]."""
     cfg = load_workspace_config(content_dir)
     fetched = []
     for src in cfg["sources"]:
@@ -240,7 +263,14 @@ def fetch_sources(content_dir: Path, external_dir: Path) -> list:
             _git("remote", "add", "origin", src["repo"], cwd=dest)
         else:
             _git("remote", "set-url", "origin", src["repo"], cwd=dest)
-        _git("fetch", "-q", "--depth=1", "origin", ref, cwd=dest)
+        fetch = ["fetch", "-q", "--depth=1"]
+        if src["sparse"]:
+            # Cone mode: the listed folders (plus files at the repo root).
+            _git("sparse-checkout", "set", "--cone", *src["sparse"], cwd=dest)
+            fetch.append("--filter=blob:none")
+        else:
+            _git("sparse-checkout", "disable", cwd=dest)
+        _git(*fetch, "origin", ref, cwd=dest)
         _git("checkout", "-q", "--force", "--detach", "FETCH_HEAD", cwd=dest)
         _git("clean", "-q", "-fdx", cwd=dest)
         sha = _git("rev-parse", "HEAD", cwd=dest)

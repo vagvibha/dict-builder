@@ -1,12 +1,13 @@
-# Configuration for converters/amarakosha_tsv_to_notes.py.
+# Configuration for converters/amarakosha_to_notes.py.
 #
-# Columns are looked up by their header text, so their order in the TSV
-# doesn't matter. Extra columns are ignored. A copy of this file can live
-# next to the TSVs in the content repo and be passed with --config.
+# Columns are looked up by their header text, so their order in the CSV
+# doesn't matter. Extra columns are ignored. The defaults match
+# vagvibha/kosha data/amarakosha; a copy of this file can live in the
+# content repo and be passed with --config.
 
 title: अमरकोषः
 
-# Record id for a verse reference kanda।varga।shloka, e.g. 1।5।1 ->
+# Record id for a verse reference kanda.varga.shloka, e.g. 1.05.001 ->
 # AK-1-05-001. Python format string over the three integers.
 id_format: "AK-{0}-{1:02d}-{2:03d}"
 # How a reference is shown (digits are converted to Devanagari).
@@ -16,19 +17,27 @@ display_format: "{0}।{1}।{2}"
 placeholder_values: ["#N/A", "TBD"]
 
 columns:
-  shlokas:
-    ref: संख्या          # kanda।varga।shloka
-    varga: वर्गः         # e.g. "1।05 (धीवर्गः)" - the name in () is used
+  shlokas:                 # shlokas.csv
+    ref: संख्या            # kanda.varga.shloka
     text: श्लोकः
-  words:
+  words:                   # words.csv
     word: प्रातिपदिकम्
-    ref: संख्या          # verse the word occurs in
-    order: अन्तर्संख्या  # position within the verse, e.g. 1।4
-    meaning: अर्थः
+    ref: संख्या            # verse the word occurs in
+    order: अन्तर्संख्या    # position within the verse, e.g. 1.4
+    meaning: अर्थः         # words with the same अर्थः are समानार्थकाः
     lingam: लिङ्गम्
     vachanam: वचनम्
-    sudha: सुधा
-    kshirasvami: क्षीरस्वामी
+    sudha: sudha_id        # -> sudha.csv
+    kshirasvami: ks_id     # -> ks_words.csv
+  sudha:                   # sudha.csv
+    id: sudha_id
+    text: commentary
+  kshirasvami:             # ks_words.csv
+    id: ks_id
+    text: commentary
+  vargas:                  # vargas.csv
+    ref: वर्गः             # kanda.varga, e.g. 1.05
+    name: varga_name       # e.g. धीवर्गः
 
-# Shown when a word's क्षीरस्वामी cell is empty.
+# Shown when a word has no क्षीरस्वामी commentary.
 kshirasvami_default: "॥*॥"

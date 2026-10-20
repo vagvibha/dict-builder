@@ -1,4 +1,4 @@
-"""Tests for scripts/converters/amarakosha_tsv_to_notes.py."""
+"""Tests for scripts/converters/amarakosha_to_notes.py."""
 import re
 import subprocess
 import sys
@@ -10,28 +10,52 @@ from tests.helpers import SCRIPTS_DIR, write
 from errors import DictionaryBuildError
 
 sys.path.insert(0, str(SCRIPTS_DIR / "converters"))
-import amarakosha_tsv_to_notes as ak  # noqa: E402
+import amarakosha_to_notes as ak  # noqa: E402
 
-CONVERTER = SCRIPTS_DIR / "converters" / "amarakosha_tsv_to_notes.py"
+CONVERTER = SCRIPTS_DIR / "converters" / "amarakosha_to_notes.py"
 
-# Columns deliberately in a different order from the real export, with
-# extra columns, mixed zero-padding and Devanagari digits in references.
-SHLOKAS_TSV = (
-    "संख्या\tश्लोकः\textra\tवर्गः\n"
-    "1।04।31\tचित्तं तु चेतो हृदयं। स्वान्तं हृन्मानसं मनः॥\tx\t1।04 (कालवर्गः)\n"
-    "1।05।01\tबुद्धिर्मनीषा धिषणा। धीः प्रज्ञा शेमुषी मतिः॥\tx\t1।05 (धीवर्गः)\n"
-    "१।५।२\tधीर्धारणावती मेधा। <x> & y॥\tx\t1।05 (धीवर्गः)\n"
-    "3।1।003\tसुकृती पुण्यवान्धन्यः॥\tx\t3।1 (TBD)\n"
+# Columns deliberately in a different order from the real data, with
+# extra columns, mixed zero-padding, '।' and Devanagari digits in references.
+SHLOKAS_CSV = (
+    "संख्या,श्लोकः,extra\n"
+    "1.04.31,चित्तं तु चेतो हृदयं। स्वान्तं हृन्मानसं मनः॥,x\n"
+    "1.05.01,बुद्धिर्मनीषा धिषणा। धीः प्रज्ञा शेमुषी मतिः॥,x\n"
+    "१।५।२,धीर्धारणावती मेधा। <x> & y॥,x\n"
+    "3.1.003,सुकृती पुण्यवान्धन्यः॥,x\n"
 )
-WORDS_TSV = (
-    "अर्थः\tप्रातिपदिकम्\tसंख्या\tअन्तर्संख्या\tलिङ्गम्\tवचनम्\tसुधा\tक्षीरस्वामी\tश्लोकः\n"
-    "बुद्धिः\tमनीषा\t1।5।1\t1।2\tस्त्री०\t\tमन्यते।\t#N/A\tignored\n"
-    "बुद्धिः\tबुद्धि\t1।05।01\t1।1\tस्त्री०\t\tबुध्यतेऽनया।\tबोधनम्।\tignored\n"
-    "मनः\tचित्त\t1।04।31\t1।1\tनपुं०\t\t\t\tignored\n"
-    "धारणावद्बुद्धिः\tमेधा\t1।05।02\t1।1\tस्त्री०\tबहु०\t<b>&\t\tignored\n"
-    "बुद्धिः\tधी\t1।05।02\t1।2\tस्त्री०\t\t\t\tignored\n"
-    "\tपुण्यवत्\t3।1।3\t1।1\tत्रि०\t\t\t\tignored\n"
+WORDS_CSV = (
+    "अर्थः,प्रातिपदिकम्,संख्या,अन्तर्संख्या,लिङ्गम्,वचनम्,sudha_id,ks_id,dup_of,issues\n"
+    "बुद्धिः,मनीषा,1.5.1,1.2,स्त्री०,,s2,k2,,\n"
+    'बुद्धिः,बुद्धि,1.05.01,1.1,स्त्री०,,s1,"k1, k3",,ignored\n'
+    "मनः,चित्त,1.04.31,1.1,नपुं०,,,,,\n"
+    "धारणावद्बुद्धिः,मेधा,1.05.02,1.1,स्त्री०,बहु०,s3,,,\n"
+    "बुद्धिः,धी,1.05.02,1.2,स्त्री०,,,,x,\n"
+    ",पुण्यवत्,3.1.3,1.1,त्रि०,,s4,,,\n"
 )
+SUDHA_CSV = (
+    "sudha_id,संख्या,commentary,,\n"
+    "s1,1.05.001,बुध्यतेऽनया।,,\n"
+    "s2,1.05.001,मन्यते।,,\n"
+    "s3,1.05.002,<b>&,,\n"
+    "s4,3.01.003,,,\n"
+    "unused,1.01.001,x,,\n"
+)
+KS_CSV = (
+    "ks_id,वर्गः,varga_name,commentary\n"
+    "k1,1.05,धीवर्गः,बोधनम्।\n"
+    "k2,1.05,धीवर्गः,#N/A\n"
+    "k3,1.05,धीवर्गः,द्वितीयम्।\n"
+)
+VARGAS_CSV = "वर्गः,varga_name\n1.04,कालवर्गः\n1.05,धीवर्गः\n3.01,TBD\n"
+FILES = {"shlokas": SHLOKAS_CSV, "words": WORDS_CSV, "sudha": SUDHA_CSV,
+         "kshirasvami": KS_CSV, "vargas": VARGAS_CSV}
+
+
+def write_data(d: Path, **override) -> Path:
+    """Writes the five CSVs under their default names into d."""
+    for table, text in {**FILES, **override}.items():
+        write(d / ak.DEFAULT_FILES[table], text)
+    return d
 
 
 def run_cli(*args):
@@ -43,20 +67,21 @@ class _Tmp(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.d = Path(self._tmp.name)
-        self.shlokas = write(self.d / "shlokas.tsv", SHLOKAS_TSV)
-        self.words = write(self.d / "words.tsv", WORDS_TSV)
+        self.data = write_data(self.d / "data")
         self.cfg = ak.load_config(ak.DEFAULT_CONFIG)
 
     def tearDown(self):
         self._tmp.cleanup()
 
-    def convert(self, shlokas=None, words=None, **kw):
-        cols = self.cfg["columns"]
-        ph = self.cfg["placeholder_values"]
+    def convert(self, lax=False, only_varga=None, **override):
+        """override: table -> replacement CSV text."""
+        data = write_data(self.d / "override", **override) if override else self.data
+        cols, ph = self.cfg["columns"], self.cfg["placeholder_values"]
+        files = {t: data / name for t, name in ak.DEFAULT_FILES.items()}
+        tables = {t: ak.read_table(f, cols[t], ph) for t, f in files.items()}
         conv = ak.Converter(self.cfg)
-        text = conv.convert(ak.read_tsv(shlokas or self.shlokas, cols["shlokas"], ph),
-                            ak.read_tsv(words or self.words, cols["words"], ph),
-                            "shlokas.tsv", "words.tsv", **kw)
+        text = conv.convert(tables, {t: f.name for t, f in files.items()},
+                            only_varga=only_varga, lax=lax)
         return text, conv.warnings
 
     @staticmethod
@@ -69,6 +94,7 @@ class _Tmp(unittest.TestCase):
 
 class TestHelpers(unittest.TestCase):
     def test_parse_ref(self):
+        self.assertEqual(ak.parse_ref("1.05.001", 3), (1, 5, 1))
         self.assertEqual(ak.parse_ref("1।05।001", 3), (1, 5, 1))
         self.assertEqual(ak.parse_ref("१।५।१", 3), (1, 5, 1))
         self.assertEqual(ak.parse_ref("1।2"), (1, 2))
@@ -76,10 +102,10 @@ class TestHelpers(unittest.TestCase):
         self.assertIsNone(ak.parse_ref("1।x।3", 3))
         self.assertIsNone(ak.parse_ref(""))
 
-    def test_varga_name(self):
-        self.assertEqual(ak.varga_name("1।05 (धीवर्गः)", []), "धीवर्गः")
-        self.assertEqual(ak.varga_name("3।1 (TBD)", ["TBD"]), "")
-        self.assertEqual(ak.varga_name("1।05", []), "")
+    def test_split_ids(self):
+        self.assertEqual(ak.split_ids("1.04.15#2, 1.04.15#3"), ["1.04.15#2", "1.04.15#3"])
+        self.assertEqual(ak.split_ids(" a ;b,"), ["a", "b"])
+        self.assertEqual(ak.split_ids(""), [])
 
     def test_format_verse(self):
         # '।।' (two dandas used as a double danda) is not split in the
@@ -99,17 +125,19 @@ class TestConfig(_Tmp):
             ak.load_config(self.d / "c.yaml")
 
     def test_missing_column(self):
-        write(self.d / "s.tsv", "संख्या\tश्लोकः\n1।1।1\tक॥\n")
+        write(self.d / "s.csv", "संख्या,text\n1.1.1,क॥\n")
         with self.assertRaises(DictionaryBuildError) as ctx:
-            ak.read_tsv(self.d / "s.tsv", self.cfg["columns"]["shlokas"], [])
-        self.assertIn("वर्गः", str(ctx.exception))
+            ak.read_table(self.d / "s.csv", self.cfg["columns"]["shlokas"], [])
+        self.assertIn("श्लोकः", str(ctx.exception))
         self.assertEqual(ctx.exception.line, 1)
 
     def test_columns_by_header_and_placeholders(self):
-        rows = ak.read_tsv(self.words, self.cfg["columns"]["words"], ["#N/A"])
-        self.assertEqual(rows[0]["word"], "मनीषा")
-        self.assertEqual(rows[0]["kshirasvami"], "")
-        self.assertEqual(rows[0]["_line"], 2)
+        rows = ak.read_table(self.data / "words.csv", self.cfg["columns"]["words"], [])
+        self.assertEqual(rows[1]["word"], "बुद्धि")
+        self.assertEqual(rows[1]["kshirasvami"], "k1, k3")
+        self.assertEqual(rows[1]["_line"], 3)
+        ks = ak.read_table(self.data / "ks_words.csv", self.cfg["columns"]["kshirasvami"], ["#N/A"])
+        self.assertEqual(ks[1], {"_line": 3, "id": "k2", "text": ""})
 
 
 class TestConversion(_Tmp):
@@ -149,7 +177,8 @@ class TestConversion(_Tmp):
         self.assertIn("• <b>अर्थः</b> – बुद्धिः", rec)
         self.assertIn("• <b>लिङ्गम्</b> – स्त्री०", rec)
         self.assertIn("• <b>सुधा</b> – बुध्यतेऽनया।", rec)
-        self.assertIn("• <b>क्षीरस्वामी</b> – बोधनम्।", rec)
+        # two ks ids -> both commentaries, in the order listed
+        self.assertIn("• <b>क्षीरस्वामी</b> – बोधनम्।<br>द्वितीयम्।", rec)
         # synonyms across verses, in reference order, excluding itself
         self.assertIn('• <b>समानार्थकाः</b> – <a href="bword://maniiShaa">मनीषा</a>(स्त्री०), '
                       '<a href="bword://dhii">धी</a>(स्त्री०)', rec)
@@ -157,6 +186,7 @@ class TestConversion(_Tmp):
 
     def test_word_defaults_escaping_and_empty_fields(self):
         self.assertIn("• <b>क्षीरस्वामी</b> – ॥*॥", self.recs["- मनीषा"])  # #N/A -> default
+        self.assertIn("• <b>क्षीरस्वामी</b> – ॥*॥", self.recs["- चित्त"])   # no ks_id
         medha = self.recs["- मेधा"]
         self.assertIn("• <b>लिङ्गम्</b> – स्त्री० [बहु०]", medha)
         self.assertIn("• <b>सुधा</b> – &lt;b&gt;&amp;", medha)
@@ -186,61 +216,87 @@ class TestConversion(_Tmp):
 
 class TestProblems(_Tmp):
     def test_missing_verse_strict_and_lax(self):
-        words = write(self.d / "w.tsv", WORDS_TSV + "अ\tकिम्\t2।1।1\t1।1\t\t\t\t\t\n")
+        words = WORDS_CSV + "अ,किम्,2.1.1,1.1,,,,,,\n"
         with self.assertRaises(DictionaryBuildError) as ctx:
             self.convert(words=words)
-        self.assertIn("words.tsv:8", str(ctx.exception))
+        self.assertIn("words.csv:8", str(ctx.exception))
         text, warnings = self.convert(words=words, lax=True)
-        self.assertTrue(any("2।1।1" in w for w in warnings))
+        self.assertTrue(any("2.1.1" in w for w in warnings))
         self.assertIn("- किम्", text)
 
-    def test_duplicate_verse(self):
-        s = write(self.d / "s.tsv", SHLOKAS_TSV + "1।5।1\tदुप॥\t\t1।05\n")
+    def test_missing_commentary_id(self):
+        words = WORDS_CSV.replace(",s3,", ",s9,")
         with self.assertRaises(DictionaryBuildError) as ctx:
-            self.convert(shlokas=s)
-        self.assertIn("duplicate", str(ctx.exception))
-        self.assertEqual(ctx.exception.line, 6)
+            self.convert(words=words)
+        self.assertIn("sudha id 's9' of 'मेधा' is not in sudha.csv", str(ctx.exception))
+        _, warnings = self.convert(words=words, lax=True)
+        self.assertEqual(len(warnings), 1)
+
+    def test_missing_varga(self):
+        vargas = VARGAS_CSV.replace("1.04,कालवर्गः\n", "")
+        with self.assertRaises(DictionaryBuildError) as ctx:
+            self.convert(vargas=vargas)
+        self.assertIn("varga 1.4 is not in vargas.csv", str(ctx.exception))
+
+    def test_duplicates(self):
+        cases = {
+            "verse": ("shlokas", SHLOKAS_CSV + "1.5.1,दुप॥,\n", 6),
+            "sudha id": ("sudha", SUDHA_CSV + "s1,x,y,,\n", 7),
+            "varga": ("vargas", VARGAS_CSV + "1.05,x\n", 5),
+        }
+        for label, (table, text, line) in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(DictionaryBuildError) as ctx:
+                    self.convert(**{table: text})
+                self.assertIn("duplicate", str(ctx.exception))
+                self.assertEqual(ctx.exception.line, line)
 
     def test_bad_reference(self):
-        s = write(self.d / "s.tsv", SHLOKAS_TSV + "1।5\tक॥\t\t1।05\n")
         with self.assertRaises(DictionaryBuildError) as ctx:
-            self.convert(shlokas=s)
+            self.convert(shlokas=SHLOKAS_CSV + "1.5,क॥,\n")
         self.assertEqual(ctx.exception.line, 6)
 
     def test_bad_headword(self):
-        w = write(self.d / "w.tsv", WORDS_TSV + "अ\tक;ख\t1।5।1\t1।3\t\t\t\t\t\n")
         with self.assertRaises(DictionaryBuildError):
-            self.convert(words=w)
+            self.convert(words=WORDS_CSV + 'अ,"क;ख",1.5.1,1.3,,,,,,\n')
 
     def test_line_starting_with_dash(self):
-        s = write(self.d / "s.tsv", SHLOKAS_TSV.replace("सुकृती", "-सुकृती"))
         with self.assertRaises(DictionaryBuildError) as ctx:
-            self.convert(shlokas=s)
+            self.convert(shlokas=SHLOKAS_CSV.replace("सुकृती", "-सुकृती"))
         self.assertIn("starting with '-'", str(ctx.exception))
 
     def test_empty_headword_warns(self):
-        w = write(self.d / "w.tsv", WORDS_TSV + "अ\t\t1।5।1\t1।3\t\t\t\t\t\n")
-        _, warnings = self.convert(words=w)
+        _, warnings = self.convert(words=WORDS_CSV + "अ,,1.5.1,1.3,,,,,,\n")
         self.assertTrue(any("no headword" in x for x in warnings))
 
 
 class TestCli(_Tmp):
     def test_full_run(self):
         out = self.d / "out" / "ak.txt"
-        res = run_cli("--words", self.words, "--shlokas", self.shlokas, "--output", out)
+        res = run_cli("--data", self.data, "--output", out)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("- e:AK-1-05-001", out.read_text(encoding="utf-8"))
 
+    def test_single_file_override(self):
+        write(self.d / "v.csv", VARGAS_CSV.replace("धीवर्गः", "बुद्धिवर्गः"))
+        out = self.d / "o.txt"
+        res = run_cli("--data", self.data, "--vargas", self.d / "v.csv", "--output", out)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("[बुद्धिवर्गः]", out.read_text(encoding="utf-8"))
+
+    def test_needs_data_or_files(self):
+        res = run_cli("--words", self.data / "words.csv", "--output", self.d / "o.txt")
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("--data", res.stderr)
+
     def test_varga_needs_debug(self):
-        res = run_cli("--words", self.words, "--shlokas", self.shlokas,
-                      "--output", self.d / "o.txt", "--varga", "1।05")
+        res = run_cli("--data", self.data, "--output", self.d / "o.txt", "--varga", "1.05")
         self.assertEqual(res.returncode, 2)
         self.assertIn("--debug", res.stderr)
 
     def test_debug_varga(self):
         out = self.d / "o.txt"
-        res = run_cli("--words", self.words, "--shlokas", self.shlokas,
-                      "--output", out, "--debug", "--varga", "1।05")
+        res = run_cli("--data", self.data, "--output", out, "--debug", "--varga", "1.05")
         self.assertEqual(res.returncode, 0, res.stderr)
         text = out.read_text(encoding="utf-8")
         self.assertIn("- e:AK-1-05-002", text)
@@ -250,10 +306,12 @@ class TestCli(_Tmp):
         self.assertIn("AK-1-04-031", res.stderr)
 
     def test_data_error_exit_code(self):
-        s = write(self.d / "s.tsv", "संख्या\tश्लोकः\n")
-        res = run_cli("--words", self.words, "--shlokas", s, "--output", self.d / "o.txt")
+        write(self.data / "shlokas.csv", "संख्या,श्लोकः\n1.1.1,क॥\n")   # varga 1.01 missing
+        write(self.d / "s.csv", "संख्या\n")
+        res = run_cli("--data", self.data, "--shlokas", self.d / "s.csv",
+                      "--output", self.d / "o.txt")
         self.assertEqual(res.returncode, 2)
-        self.assertIn("s.tsv:1", res.stderr)
+        self.assertIn("s.csv:1", res.stderr)
         self.assertFalse((self.d / "o.txt").exists())
 
 

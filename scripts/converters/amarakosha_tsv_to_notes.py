@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Converts the Amarakosha spreadsheet exports into one `notes` dictionary file.
+"""Converts the Amarakosha master data (vagvibha/kosha, data/amarakosha)
+into one `notes` dictionary file.
 
-Inputs (tab-separated, first row = column headers; the header text for
-each field comes from the config, so column order doesn't matter):
-  --shlokas  one row per verse: reference (kanda।varga।shloka), varga
-             ("1।05 (धीवर्गः)" - the name in parentheses is shown on word
-             entries) and the verse text.
-  --words    one row per word: headword, verse reference, position within
-             the verse, meaning, lingam, vachanam, सुधा and क्षीरस्वामी.
+Inputs (CSV, first row = column headers; the header text for each field
+comes from the config, so column order doesn't matter and other columns
+are ignored). References are kanda.varga.shloka (`1.05.001`; `।` and
+Devanagari digits also work):
+  --shlokas      one row per verse: reference and verse text.
+  --words        one row per word: headword, verse reference, position
+                 within the verse, meaning, lingam, vachanam, and the ids
+                 of its सुधा and क्षीरस्वामी commentary (a cell may list
+                 several ids, comma-separated).
+  --sudha        सुधा commentary: id and text.
+  --kshirasvami  क्षीरस्वामी commentary: id and text.
+  --vargas       varga reference (`1.05`) and name (`धीवर्गः`), shown on
+                 word entries.
 
 Output: a `notes` file with
   - one entry per verse, keyed by its id (e.g. AK-1-05-001), listing its
@@ -18,11 +25,13 @@ Links use GoldenDict's bword:// scheme and always point at keys this file
 defines; a dangling link is an error.
 
 Usage:
-  amarakosha_tsv_to_notes.py --words words.tsv --shlokas shlokas.tsv \\
-      --output amarakosha.txt [--config amarakosha.yaml]
+  amarakosha_to_notes.py --data DIR --output amarakosha.txt [--config amarakosha.yaml]
+      (DIR holds words.csv, shlokas.csv, sudha.csv, ks_words.csv, vargas.csv;
+       --words/--shlokas/--sudha/--kshirasvami/--vargas override single files)
 
-  --debug --varga 1।05   convert one varga only (for checking output);
-                         links leaving that varga become warnings.
+  --debug --varga 1.05   convert one varga only (for checking output);
+                         links leaving that varga and missing commentary
+                         ids become warnings.
 
 Exit status 2 on a data problem, with a file:line message.
 """
@@ -48,8 +57,16 @@ DEFAULT_CONFIG = Path(__file__).resolve().parent / "config" / "amarakosha.yaml"
 DEV_TO_ASCII = str.maketrans("०१२३४५६७८९", "0123456789")
 ASCII_TO_DEV = str.maketrans("0123456789", "०१२३४५६७८९")
 
-SHLOKA_FIELDS = {"ref", "varga", "text"}
-WORD_FIELDS = {"word", "ref", "order", "meaning", "lingam", "vachanam", "sudha", "kshirasvami"}
+TABLE_FIELDS = {
+    "shlokas": {"ref", "text"},
+    "words": {"word", "ref", "order", "meaning", "lingam", "vachanam", "sudha", "kshirasvami"},
+    "sudha": {"id", "text"},
+    "kshirasvami": {"id", "text"},
+    "vargas": {"ref", "name"},
+}
+# --data DIR: default file name for each table.
+DEFAULT_FILES = {"shlokas": "shlokas.csv", "words": "words.csv", "sudha": "sudha.csv",
+                 "kshirasvami": "ks_words.csv", "vargas": "vargas.csv"}
 REQUIRED_CONFIG = {"title", "id_format", "display_format", "columns"}
 
 
@@ -67,7 +84,7 @@ def load_config(path: Path) -> dict:
     if missing:
         raise DictionaryBuildError(f"config is missing {sorted(missing)}", file=path)
     cols = cfg["columns"]
-    for table, fields in (("shlokas", SHLOKA_FIELDS), ("words", WORD_FIELDS)):
+    for table, fields in TABLE_FIELDS.items():
         given = set((cols.get(table) or {}))
         if given != fields:
             raise DictionaryBuildError(
@@ -78,7 +95,7 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
-def read_tsv(path: Path, columns: dict, placeholders) -> list:
+def read_table(path: Path, columns: dict, placeholders) -> list:
     """Returns rows as {field: value, '_line': n}, columns found by header."""
     placeholders = {str(p).strip() for p in placeholders}
     try:
@@ -86,7 +103,7 @@ def read_tsv(path: Path, columns: dict, placeholders) -> list:
     except OSError as e:
         raise DictionaryBuildError(f"cannot read: {e}", file=path)
     with f:
-        reader = csv.reader(f, delimiter="\t")
+        reader = csv.reader(f)
         header = [h.strip() for h in next(reader, [])]
         index = {}
         for field, name in columns.items():
@@ -108,8 +125,8 @@ def read_tsv(path: Path, columns: dict, placeholders) -> list:
 
 
 def parse_ref(text: str, parts: int = None):
-    """'1।05।001' / '१।५।१' -> (1, 5, 1). None if not numeric."""
-    pieces = [p.strip() for p in text.translate(DEV_TO_ASCII).split("।")]
+    """'1.05.001' / '1।05।001' / '१।५।१' -> (1, 5, 1). None if not numeric."""
+    pieces = [p.strip() for p in re.split(r"[.।]", text.translate(DEV_TO_ASCII))]
     if not pieces or not all(p.isdigit() for p in pieces):
         return None
     if parts is not None and len(pieces) != parts:
@@ -117,13 +134,9 @@ def parse_ref(text: str, parts: int = None):
     return tuple(int(p) for p in pieces)
 
 
-VARGA_RE = re.compile(r"^\s*[^()]*?\s*(?:\((?P<name>[^()]*)\))?\s*$")
-
-
-def varga_name(cell: str, placeholders) -> str:
-    m = VARGA_RE.match(cell or "")
-    name = (m.group("name") or "").strip() if m else ""
-    return "" if name in {str(p) for p in placeholders} else name
+def split_ids(cell: str) -> list:
+    """'1.04.15#2, 1.04.15#3' -> ['1.04.15#2', '1.04.15#3']."""
+    return [i.strip() for i in re.split(r"[,;]", cell or "") if i.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +194,35 @@ class Converter:
             raise DictionaryBuildError(msg)
         self.warnings.append(msg)
 
-    def convert(self, shloka_rows, word_rows, shlokas_file, words_file,
-                only_varga=None, lax=False) -> str:
-        """lax: report link/reference problems as warnings (debug runs)."""
+    def convert(self, tables: dict, files: dict, only_varga=None, lax=False) -> str:
+        """tables/files: {table name: rows / file name for messages}.
+        lax: report link/reference problems as warnings (debug runs)."""
         strict = not lax
-        placeholders = self.cfg["placeholder_values"]
+        shloka_rows, word_rows = tables["shlokas"], tables["words"]
+        shlokas_file, words_file = files["shlokas"], files["words"]
+
+        # --- vargas and commentary ------------------------------------------
+        vargas = {}
+        for row in tables["vargas"]:
+            where = (files["vargas"], row["_line"])
+            ref = parse_ref(row["ref"], 2)
+            if ref is None:
+                raise DictionaryBuildError(
+                    f"bad varga reference {row['ref']!r} (expected kanda.varga)", *where)
+            if ref in vargas:
+                raise DictionaryBuildError(f"duplicate varga {row['ref']!r}", *where)
+            vargas[ref] = row["name"]
+
+        commentary = {}
+        for table in ("sudha", "kshirasvami"):
+            texts = commentary[table] = {}
+            for row in tables[table]:
+                where = (files[table], row["_line"])
+                if not row["id"]:
+                    raise DictionaryBuildError("row without an id", *where)
+                if row["id"] in texts:
+                    raise DictionaryBuildError(f"duplicate id {row['id']!r}", *where)
+                texts[row["id"]] = row["text"]
 
         # --- verses ---------------------------------------------------------
         verses = {}
@@ -198,8 +235,11 @@ class Converter:
             if ref in verses:
                 raise DictionaryBuildError(
                     f"duplicate verse {row['ref']!r} (first at line {verses[ref]['_line']})", *where)
+            if ref[:2] not in vargas:
+                self.problem(f"{shlokas_file}:{row['_line']}: varga "
+                             f"{'.'.join(map(str, ref[:2]))} is not in {files['vargas']}", strict)
             verses[ref] = {**row, "ref": ref, "id": self.ref_id(ref),
-                           "varga_name": varga_name(row["varga"], placeholders)}
+                           "varga_name": vargas.get(ref[:2], "")}
         if not verses:
             raise DictionaryBuildError("no verses", file=shlokas_file)
         order = sorted(verses)
@@ -220,7 +260,17 @@ class Converter:
             if ref not in verses:
                 self.problem(f"{words_file}:{row['_line']}: verse {row['ref']} of "
                              f"'{row['word']}' is not in {shlokas_file}", strict)
-            words.append({**row, "ref": ref,
+            texts = {}
+            for table in ("sudha", "kshirasvami"):
+                found = []
+                for cid in split_ids(row[table]):
+                    if cid in commentary[table]:
+                        found.append(commentary[table][cid])
+                    else:
+                        self.problem(f"{words_file}:{row['_line']}: {table} id {cid!r} of "
+                                     f"'{row['word']}' is not in {files[table]}", strict)
+                texts[table] = [t for t in found if t]
+            words.append({**row, "ref": ref, **texts,
                           "order": parse_ref(row["order"]) or (999,),
                           "key": self.word_key(row["word"], where)})
         words.sort(key=lambda w: (w["ref"], w["order"]))
@@ -276,10 +326,11 @@ class Converter:
             if lingam:
                 lines.append(f"• <b>लिङ्गम्</b> – {lingam}")
             if w["sudha"]:
-                lines.append(f"• <b>सुधा</b> – {esc(w['sudha'])}")
-            kshira = w["kshirasvami"] or self.cfg["kshirasvami_default"]
+                lines.append("• <b>सुधा</b> – " + "<br>".join(esc(t) for t in w["sudha"]))
+            kshira = [esc(t) for t in w["kshirasvami"]] or (
+                [esc(self.cfg["kshirasvami_default"])] if self.cfg["kshirasvami_default"] else [])
             if kshira:
-                lines.append(f"• <b>क्षीरस्वामी</b> – {esc(kshira)}")
+                lines.append("• <b>क्षीरस्वामी</b> – " + "<br>".join(kshira))
 
             synonyms, seen = [], {w["word"]}
             for s in by_meaning.get(w["meaning"], []) if w["meaning"] else []:
@@ -318,30 +369,37 @@ class Converter:
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--words", required=True, type=Path)
-    p.add_argument("--shlokas", required=True, type=Path)
+    p.add_argument("--data", type=Path, help="directory with the five CSV files "
+                   f"({', '.join(DEFAULT_FILES.values())})")
+    for table in DEFAULT_FILES:
+        p.add_argument(f"--{table}", type=Path, help=f"override {DEFAULT_FILES[table]}")
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     p.add_argument("--debug", action="store_true",
                    help="allow --varga; data problems that would be errors become warnings")
-    p.add_argument("--varga", help="debug only: convert just this varga, e.g. 1।05")
+    p.add_argument("--varga", help="debug only: convert just this varga, e.g. 1.05")
     args = p.parse_args(argv)
 
     if args.varga and not args.debug:
         p.error("--varga is only allowed with --debug (it can't validate links outside the varga)")
+    files = {}
+    for table, name in DEFAULT_FILES.items():
+        given = getattr(args, table)
+        if given is None and args.data is None:
+            p.error(f"give --data DIR or --{table} FILE")
+        files[table] = given if given is not None else args.data / name
 
     try:
         only = None
         if args.varga:
             only = parse_ref(args.varga, 2)
             if only is None:
-                p.error(f"--varga must look like 1।05, got {args.varga!r}")
+                p.error(f"--varga must look like 1.05, got {args.varga!r}")
         cfg = load_config(args.config)
         conv = Converter(cfg)
-        text = conv.convert(
-            read_tsv(args.shlokas, cfg["columns"]["shlokas"], cfg["placeholder_values"]),
-            read_tsv(args.words, cfg["columns"]["words"], cfg["placeholder_values"]),
-            args.shlokas, args.words, only_varga=only, lax=args.debug)
+        tables = {t: read_table(f, cfg["columns"][t], cfg["placeholder_values"])
+                  for t, f in files.items()}
+        text = conv.convert(tables, files, only_varga=only, lax=args.debug)
     except DictionaryBuildError as e:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(2)

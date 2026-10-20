@@ -50,7 +50,8 @@ class TestWorkspaceConfig(_Workspace):
         src = load_workspace_config(self.content)["sources"][0]
         self.assertEqual(src, {"name": "repoA", "repo": "https://x/repoA.git", "ref": None,
                                "manifest": "dict/meta.yaml", "suffix": "-repoA",
-                               "dictionaries": None, "defaults": {}})
+                               "dictionaries": None, "defaults": {}, "build": True,
+                               "sparse": None})
 
     def test_errors(self):
         cases = {
@@ -60,6 +61,10 @@ class TestWorkspaceConfig(_Workspace):
             "unknown key": "sources:\n  - name: a\n    repo: r\n    branch: x\n",
             "dup source": "sources:\n  - {name: a, repo: r}\n  - {name: a, repo: s}\n",
             "bad default type": "sources:\n  - name: a\n    repo: r\n    defaults: {type: bogus}\n",
+            "bad build": "sources:\n  - {name: a, repo: r, build: 'no'}\n",
+            "sparse not list": "sources:\n  - {name: a, repo: r, sparse: data}\n",
+            "sparse escapes": "sources:\n  - {name: a, repo: r, sparse: [../x]}\n",
+            "sparse absolute": "sources:\n  - {name: a, repo: r, sparse: [/x]}\n",
         }
         for label, text in cases.items():
             with self.subTest(label):
@@ -91,6 +96,12 @@ class TestBuildPlan(_Workspace):
         self.assertEqual(plan[1]["dir"], (self.external / "repoA/dict/kavya").resolve())
         # name defaults to the id when the source provides no meta.yaml
         self.assertEqual(plan[2]["meta_defaults"], {"type": "notes", "name": "blah-repoA-Nick"})
+
+    def test_data_only_source_is_not_built(self):
+        self.local("sahitya")
+        self.config("dictionaries: [sahitya]\nsources:\n  - {name: kosha, repo: r, build: false}\n")
+        # not fetched, no manifest: fine, nothing is built from it
+        self.assertEqual([e["id"] for e in build_plan(self.content, self.external)], ["sahitya"])
 
     def test_fallback_list_when_no_manifest(self):
         self.config(self.SOURCE + "    dictionaries: [kavya]\n")
@@ -126,30 +137,29 @@ class TestBuildPlan(_Workspace):
 
 
 class TestGenerated(_Workspace):
-    GEN = ("generated:\n  - id: ak\n    converter: amarakosha_tsv_to_notes\n"
-           "    args: [--words, masters/w.tsv, --shlokas, masters/s.tsv]\n")
+    GEN = ("generated:\n  - id: ak\n    converter: amarakosha_to_notes\n"
+           "    args: [--data, external/kosha/ak]\n")
 
     def masters(self):
-        from tests.test_converters import SHLOKAS_TSV, WORDS_TSV
-        write(self.ws / "masters/w.tsv", WORDS_TSV)
-        write(self.ws / "masters/s.tsv", SHLOKAS_TSV)
+        from tests.test_amarakosha import write_data
+        write_data(self.ws / "external/kosha/ak")
 
     def test_config(self):
         self.config(self.GEN + "    meta: {name: Amarakosha}\n")
         gen = load_workspace_config(self.content)["generated"][0]
-        self.assertEqual(gen, {"id": "ak", "converter": "amarakosha_tsv_to_notes",
-                               "args": ["--words", "masters/w.tsv", "--shlokas", "masters/s.tsv"],
+        self.assertEqual(gen, {"id": "ak", "converter": "amarakosha_to_notes",
+                               "args": ["--data", "external/kosha/ak"],
                                "meta": {"name": "Amarakosha"}})
 
     def test_config_errors(self):
         cases = {
             "unknown converter": "generated:\n  - {id: a, converter: nosuch}\n",
             "path converter": "generated:\n  - {id: a, converter: ../plan}\n",
-            "bad args": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, args: x}\n",
-            "bad id": "generated:\n  - {id: 'a b', converter: amarakosha_tsv_to_notes}\n",
-            "bad type": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, "
+            "bad args": "generated:\n  - {id: a, converter: amarakosha_to_notes, args: x}\n",
+            "bad id": "generated:\n  - {id: 'a b', converter: amarakosha_to_notes}\n",
+            "bad type": "generated:\n  - {id: a, converter: amarakosha_to_notes, "
                         "meta: {type: bogus}}\n",
-            "unknown key": "generated:\n  - {id: a, converter: amarakosha_tsv_to_notes, x: 1}\n",
+            "unknown key": "generated:\n  - {id: a, converter: amarakosha_to_notes, x: 1}\n",
         }
         for label, text in cases.items():
             with self.subTest(label):
@@ -174,10 +184,10 @@ class TestGenerated(_Workspace):
         self.assertEqual(plan[1]["meta_defaults"], {"name": "ak", "type": "notes"})
 
     def test_generate_failure(self):
-        self.config(self.GEN)   # masters missing
+        self.config(self.GEN)   # data missing
         with self.assertRaises(DictionaryBuildError) as ctx:
             generate(self.ws, self.content, self.ws / "build/generated")
-        self.assertIn("amarakosha_tsv_to_notes", str(ctx.exception))
+        self.assertIn("amarakosha_to_notes", str(ctx.exception))
 
 
 class TestFetch(_Workspace):
@@ -215,6 +225,26 @@ class TestFetch(_Workspace):
         self.config(f"sources:\n  - name: r\n    repo: {upstream}\n    ref: other\n")
         fetch_sources(self.content, self.external)
         self.assertEqual((self.external / "r/f").read_text(), "other")
+
+    def test_sparse(self):
+        upstream = self.ws / "upstream"
+        sha = make_git_repo(upstream, {"README": "r", "data/ak/w.csv": "1", "data/other/x.csv": "2",
+                                       "big/blob.bin": "3"})
+        subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=upstream,
+                       check=True)
+        self.config(f"sources:\n  - name: kosha\n    repo: file://{upstream}\n"
+                    "    build: false\n    sparse: [data/ak]\n")
+        self.assertEqual(fetch_sources(self.content, self.external),
+                         [("kosha", f"file://{upstream}", sha)])
+        got = sorted(str(p.relative_to(self.external / "kosha"))
+                     for p in (self.external / "kosha").rglob("*")
+                     if p.is_file() and ".git" not in p.parts)
+        self.assertEqual(got, ["README", "data/ak/w.csv"])
+
+        # dropping 'sparse' later checks out everything
+        self.config(f"sources:\n  - name: kosha\n    repo: file://{upstream}\n    build: false\n")
+        fetch_sources(self.content, self.external)
+        self.assertTrue((self.external / "kosha/big/blob.bin").exists())
 
     def test_bad_repo(self):
         self.config(f"sources:\n  - name: r\n    repo: {self.ws / 'nosuch'}\n")
