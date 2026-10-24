@@ -9,7 +9,7 @@ from errors import DictionaryBuildError
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 EXCLUSIONS_CONFIG_PATH = CONFIG_DIR / "exclusions.yaml"
 
-KNOWN_TYPES = {"one-liner", "notes", "shloka"}
+KNOWN_TYPES = {"one-liner", "notes", "shloka", "record"}
 
 
 def load_global_exclusions(path: Path = EXCLUSIONS_CONFIG_PATH) -> list:
@@ -56,7 +56,7 @@ def load_book_meta(dict_dir: Path, defaults: dict = None) -> dict:
     }
 
 
-INPUT_SUFFIXES = (".txt", ".csv")   # .csv = the 'table' format (table_input.py)
+INPUT_SUFFIXES = (".txt",)
 
 
 def _input_files_in(d: Path) -> list:
@@ -64,7 +64,7 @@ def _input_files_in(d: Path) -> list:
 
 
 def discover_input_files(dict_dir: Path, folders: list) -> list:
-    """Top-level *.txt and *.csv files in dict_dir, plus those (one level
+    """Top-level *.txt files in dict_dir, plus those (one level
     deep, non-recursive) in each of the named `folders`. Sorted for
     determinism."""
     files = _input_files_in(dict_dir)
@@ -164,11 +164,11 @@ def read_header(data: str, allowed_tags: set):
     lines_consumed = 0
 
     while data.find('#') == 0:
-        (line, data) = data.split('\n', 1)
+        line, _, data = data.partition('\n')
         lines_consumed += 1
 
     while data.find(PREFIX) == 0:
-        (line, data) = data.split('\n', 1)
+        line, _, data = data.partition('\n')
         lines_consumed += 1
         content = line[len(PREFIX):]
         if '=' not in content:

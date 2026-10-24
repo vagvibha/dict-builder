@@ -306,11 +306,11 @@ def sync_sheets(workspace: Path, content_dir: Path, client=None, log=None) -> li
     """Downloads every 'sheets:' tab (all or nothing). Returns the files written."""
     import sheets
     cfg = load_workspace_config(content_dir)
-    entries = sheets.load_sheets_config(cfg["sheets"], workspace, cfg["path"])
+    entries = sheets.load_sheets_config(cfg["sheets"], workspace, cfg["path"], content_dir)
     if not entries:
         print("No 'sheets:' configured.", file=sys.stderr)
         return []
-    return sheets.sync(entries, content_dir, client=client,
+    return sheets.sync(entries, client=client,
                        log=log or (lambda m: print(m, file=sys.stderr)))
 
 

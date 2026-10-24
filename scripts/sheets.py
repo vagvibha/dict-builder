@@ -1,11 +1,11 @@
-"""Downloads Google Sheets tabs into the workspace ('sheets:' in
-<content-dir>/meta.yaml):
+"""Downloads Google Sheets tabs into the content directory as record
+files ('sheets:' in <content-dir>/meta.yaml; format in record_input.py):
 
     sheets:
-      - path: contents/misc/words.csv     # relative to the workspace; must be .csv
+      - path: contents/misc/words.txt     # relative to the workspace; a .txt in the content dir
         url: https://docs.google.com/spreadsheets/d/<id>/edit?gid=123#gid=123
         tab: Words                        # the tab's name in the sheet
-      - path: contents/misc/other.csv
+      - path: contents/misc/other.txt
         url: https://docs.google.com/spreadsheets/d/<id>/edit
         tab: Other                        # no gid in the url: found by name
         fetch: false                      # keep the committed file as it is
@@ -19,18 +19,14 @@ tab in the sheet fails the sync until the config is updated. Credentials:
   GOOGLE_APPLICATION_CREDENTIALS  a path to the key file (handy locally)
 Values are read as formatted, i.e. as shown in the sheet.
 
-Every file is tidied the same way, so git only shows real changes:
-Unicode NFC, no-break spaces -> spaces, trimmed cells, empty trailing
-rows/columns dropped, LF line endings.
+Every cell is tidied the same way, so git only shows real changes:
+Unicode NFC, no-break spaces -> spaces, LF line breaks, trimmed; empty
+trailing rows/columns dropped.
 
-All or nothing: a file under the content directory must also parse as a
-table dictionary file (table_input.py); if any download or check fails,
-nothing is written.
-
-(Same approach and file tidying as vagvibha/kosha's sync_sheets.py.)
+All or nothing: every file must also parse as a record dictionary file
+exactly as the build reads it; if any download or check fails, nothing
+is written. The sync is one way: each run overwrites the files.
 """
-import csv
-import io
 import json
 import os
 import re
@@ -53,14 +49,15 @@ def parse_url(url: str):
     return m.group(1), int(g.group(1)) if g else None
 
 
-def load_sheets_config(raw: list, workspace: Path, meta_path: Path) -> list:
-    """Validates the 'sheets:' list. Returns [{path (Path), rel, url, fetch}]."""
+def load_sheets_config(raw: list, workspace: Path, meta_path: Path, content_dir: Path) -> list:
+    """Validates the 'sheets:' list. Returns [{path (Path), rel, url, tab, fetch}]."""
     if raw is None:
         return []
     if not isinstance(raw, list):
         raise DictionaryBuildError("'sheets' must be a list", file=meta_path)
     out, seen = [], set()
     ws = workspace.resolve()
+    content = content_dir.resolve()
     for i, item in enumerate(raw):
         where = f"sheets[{i}]"
         if not isinstance(item, dict):
@@ -69,12 +66,13 @@ def load_sheets_config(raw: list, workspace: Path, meta_path: Path) -> list:
         if unknown:
             raise DictionaryBuildError(f"{where}: unknown keys {sorted(unknown)}", file=meta_path)
         rel = str(item.get("path") or "").strip()
-        if not rel.endswith(".csv"):
-            raise DictionaryBuildError(f"{where}: 'path' must be a .csv file", file=meta_path)
+        if not rel.endswith(".txt"):
+            raise DictionaryBuildError(f"{where}: 'path' must be a .txt file", file=meta_path)
         path = (ws / rel).resolve()
-        if Path(rel).is_absolute() or ws not in path.parents:
-            raise DictionaryBuildError(f"{where}: 'path' must be inside the workspace",
-                                       file=meta_path)
+        if Path(rel).is_absolute() or content not in path.parents:
+            raise DictionaryBuildError(
+                f"{where}: 'path' must be inside the content directory ({content_dir.name}/)",
+                file=meta_path)
         if path in seen:
             raise DictionaryBuildError(f"{where}: path {rel!r} listed twice", file=meta_path)
         seen.add(path)
@@ -100,9 +98,12 @@ def load_sheets_config(raw: list, workspace: Path, meta_path: Path) -> list:
     return out
 
 
-def tidy(rows) -> str:
-    rows = [[unicodedata.normalize("NFC", str(c).replace(" ", " ")).strip() for c in r]
-            for r in rows]
+def tidy(rows) -> list:
+    """-> rectangular rows of tidied cells, empty trailing rows/columns dropped."""
+    def cell(c):
+        c = str(c).replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
+        return unicodedata.normalize("NFC", c).strip()
+    rows = [[cell(c) for c in r] for r in rows]
     while rows and not any(rows[-1]):
         rows.pop()
     if rows:
@@ -111,9 +112,17 @@ def tidy(rows) -> str:
         while width and not any(r[width - 1] for r in rows):
             width -= 1
         rows = [r[:width] for r in rows]
-    out = io.StringIO()
-    csv.writer(out, lineterminator="\n").writerows(rows)
-    return out.getvalue()
+    return rows
+
+
+def to_record_text(rows, url: str, title: str) -> str:
+    import record_input
+    return record_input.rows_to_text(tidy(rows), comments=[
+        "GENERATED by `plan.py sync-sheets` from Google Sheets. Do not edit:",
+        "every sync overwrites this file. Edit the sheet instead.",
+        f"Sheet: {url}",
+        f"Tab: {title}",
+    ])
 
 
 class SheetsClient:
@@ -190,16 +199,15 @@ def resolve_tab(titles: dict, gid, tab) -> str:
     return tab
 
 
-def validate_table(path: Path, text: str) -> int:
+def validate(path: Path, text: str) -> int:
     """Parses `text` exactly as a build would read the file. Returns the
     number of entries."""
-    import table_input
+    import record_input
     import transliteration
-    handler = table_input.TableInputHandler(transliteration.Translator(), info=str(path))
-    return len(handler.process_file(path, text))
+    return len(record_input.read_record_file(path, text, transliteration.Translator()))
 
 
-def sync(sheets: list, content_dir: Path, client=None, log=print) -> list:
+def sync(sheets: list, client=None, log=print) -> list:
     """Downloads, tidies and checks every sheet with fetch: true, then
     writes them all, or nothing if anything failed. Returns the paths
     written (changed files only)."""
@@ -211,18 +219,13 @@ def sync(sheets: list, content_dir: Path, client=None, log=print) -> list:
         return []
     client = client or SheetsClient()
 
-    content = content_dir.resolve()
     results, failed = [], []
     for s in todo:
         try:
             rows, title = client.fetch(s["url"], s["tab"])
-            text = tidy(rows)
-            if not text:
-                raise DictionaryBuildError("the tab is empty")
-            detail = f"{text.count(chr(10))} lines"
-            if content in s["path"].parents:
-                detail = f"{validate_table(s['path'], text)} entries"
-            results.append((s, text, f"tab {title!r}, {detail}"))
+            text = to_record_text(rows, s["url"], title)
+            n = validate(s["path"], text)
+            results.append((s, text, f"tab {title!r}, {n} entries"))
         except DictionaryBuildError as e:
             failed.append(f"{s['rel']}: {e}")
         except Exception as e:   # network / API errors

@@ -8,7 +8,7 @@ import utils
 import output_processing
 import input_handlers
 import markup
-import table_input
+import record_input
 import transliteration
 from errors import DictionaryBuildError
 from stats import StatsBuilder
@@ -71,7 +71,7 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
     book_exclusions = set(global_exclusions) | set(meta['skip'])
 
     ALLOWED_METADATA = {'title', 'shlokakey', 'lang', 'skip', 'type', 'auto_shloka',
-                        'show_anvaya'}
+                        'show_anvaya', 'keys', 'entry'}
 
     input_files = utils.discover_input_files(dict_dir, meta['folders'])
 
@@ -90,7 +90,7 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
 
     if not input_files:
         raise DictionaryBuildError(
-            "no .txt or .csv files found (check meta.yaml 'folders' if content lives in "
+            "no .txt files found (check meta.yaml 'folders' if content lives in "
             "subdirectories)",
             file=dict_dir)
 
@@ -101,12 +101,6 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
 
     for file_path in input_files:
         relative_path = str(file_path.relative_to(dict_dir))
-        if file_path.suffix == '.csv':
-            handler = table_input.TableInputHandler(
-                transliteration.Translator(), info=str(file_path))
-            processed_output[relative_path] = handler.process_file(file_path)
-            continue
-
         with open(file_path, 'r', encoding='utf-8') as f:
             file_content = f.read().strip().rstrip().replace('\r', '')
 
@@ -120,6 +114,20 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
         except DictionaryBuildError as e:
             raise e.with_location(file=file_path)
 
+        file_type = resolve_file_type(headers, meta['type'], file_path)
+        if file_type == 'record':
+            # Parsed per cell (bold markup included), from the raw text.
+            handler = record_input.RecordInputHandler(
+                transliteration.Translator(), info=str(file_path))
+            processed_output[relative_path] = handler.process_text(
+                raw_records_text, headers, line_offset=n_header_lines)
+            continue
+        for key in ('keys', 'entry'):
+            if key in headers:
+                raise DictionaryBuildError(
+                    f"HEADER:{key} is only for record files (HEADER:type=record)",
+                    file=file_path, line=1)
+
         records_text = markup.apply_bold_markup(
             raw_records_text, filename=file_path, line_offset=n_header_lines)
 
@@ -130,8 +138,6 @@ def build_book(dict_dir: Path, output_format: str, enable_stats: bool,
             if bool_key in headers:
                 headers[bool_key] = parse_bool_header(
                     headers[bool_key], bool_key, file_path)
-
-        file_type = resolve_file_type(headers, meta['type'], file_path)
 
         # Per-file exclusion set = global + book + this file's own HEADER:skip
         # (HEADER:skip is layered on top inside process_stream itself).

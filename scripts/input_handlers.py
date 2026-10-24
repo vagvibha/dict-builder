@@ -109,7 +109,7 @@ class BaseInputHandler:
     def process_records(self, records: list, headers: dict = None, line_offset: int = 0) -> list:
         """Turns (line_no, record) pairs into entries. A record is whatever
         the subclass's extract_record_parts() accepts (text for the text
-        formats; the table format passes its cells)."""
+        formats; the record format passes its cells)."""
         if headers is None:
             headers = {}
         if 'skip' in headers:
