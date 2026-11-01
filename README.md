@@ -220,12 +220,12 @@ problem, and can be run by hand or from `generated:`.
 
 **`amarakosha_to_notes.py`** reads the Amarakosha master data from
 [kosha](https://github.com/vagvibha/kosha) (`data/amarakosha`: `words`,
-`shlokas`, `sudha`, `ks_words` and `vargas` CSVs; `--data DIR`, or each
-file on its own) and writes one `notes` file. It has an entry per verse
+`shlokas`, `sudha`, `ks_words` and `vargas` `.txt` record files, as synced
+from Google Sheets by kosha; `--data DIR`, or each file on its own) and writes one `notes` file. It has an entry per verse
 (key `AK-1-05-001`, its words grouped by meaning, Prev/Next links) and an
 entry per word (details, सुधा and क्षीरस्वामी commentary joined by
 `sudha_id`/`ks_id`, all words of the same अर्थः, its verse and varga). Columns
-are found by header name, set in `converters/config/amarakosha.yaml` (pass
+are found by name (via the files' `HEADER:.A=<column name>` lines), set in `converters/config/amarakosha.yaml` (pass
 your own copy with `--config`). A link to a key not in the output, or a
 commentary id or varga that isn't in its file, is an error.
 `--debug --varga 1.05` converts one varga and turns those errors into

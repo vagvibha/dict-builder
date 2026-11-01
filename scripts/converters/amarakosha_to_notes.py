@@ -2,10 +2,21 @@
 """Converts the Amarakosha master data (vagvibha/kosha, data/amarakosha)
 into one `notes` dictionary file.
 
-Inputs (CSV, first row = column headers; the header text for each field
-comes from the config, so column order doesn't matter and other columns
-are ignored). References are kanda.varga.shloka (`1.05.001`; `।` and
-Devanagari digits also work):
+Inputs are kosha record files (.txt, one block per sheet row; format in
+vagvibha/kosha scripts/records.py):
+
+    HEADER:type=record
+    HEADER:key=संख्या
+    HEADER:.A=संख्या          short name -> column name, one per column
+    HEADER:.B=श्लोकः
+
+    .--- 1.01.006            record marker
+    .A: 1.01.006             '.<short name>: <value>'; further lines of a
+    .B: स्वरव्ययं ...         cell follow as they are
+
+The column name for each field comes from the config, so column order and
+short names don't matter and other columns are ignored. References are
+kanda.varga.shloka (`1.05.001`; `।` and Devanagari digits also work):
   --shlokas      one row per verse: reference and verse text.
   --words        one row per word: headword, verse reference, position
                  within the verse, meaning, lingam, vachanam, and the ids
@@ -26,7 +37,7 @@ defines; a dangling link is an error.
 
 Usage:
   amarakosha_to_notes.py --data DIR --output amarakosha.txt [--config amarakosha.yaml]
-      (DIR holds words.csv, shlokas.csv, sudha.csv, ks_words.csv, vargas.csv;
+      (DIR holds words.txt, shlokas.txt, sudha.txt, ks_words.txt, vargas.txt;
        --words/--shlokas/--sudha/--kshirasvami/--vargas override single files)
 
   --debug --varga 1.05   convert one varga only (for checking output);
@@ -36,7 +47,6 @@ Usage:
 Exit status 2 on a data problem, with a file:line message.
 """
 import argparse
-import csv
 import html
 import re
 import sys
@@ -65,8 +75,12 @@ TABLE_FIELDS = {
     "vargas": {"ref", "name"},
 }
 # --data DIR: default file name for each table.
-DEFAULT_FILES = {"shlokas": "shlokas.csv", "words": "words.csv", "sudha": "sudha.csv",
-                 "kshirasvami": "ks_words.csv", "vargas": "vargas.csv"}
+DEFAULT_FILES = {"shlokas": "shlokas.txt", "words": "words.txt", "sudha": "sudha.txt",
+                 "kshirasvami": "ks_words.txt", "vargas": "vargas.txt"}
+
+# kosha record files (vagvibha/kosha scripts/records.py).
+MARKER = ".---"
+HEADER_RE = re.compile(r"^HEADER:([a-z]+|\.[A-Z]+)=(.*)$")
 REQUIRED_CONFIG = {"title", "id_format", "display_format", "columns"}
 
 
@@ -95,32 +109,95 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
+def parse_record_file(text: str, path) -> tuple:
+    """A kosha record file -> (columns [(short name, column name)] in sheet
+    order, records [(marker line, {short name: value})])."""
+    def err(msg, n):
+        return DictionaryBuildError(msg, file=path, line=n)
+
+    lines = text.replace("\r\n", "\n").split("\n")
+    headers, columns, n = {}, [], 0
+    while n < len(lines):
+        line = lines[n]
+        if line.startswith("#") or not line.strip():
+            n += 1
+            continue
+        m = HEADER_RE.match(line)
+        if not m:
+            break
+        name, value = m.groups()
+        if name.startswith("."):
+            if any(a == name[1:] for a, _ in columns):
+                raise err(f"short name {name} given twice", n + 1)
+            columns.append((name[1:], value.strip()))
+        else:
+            headers[name] = value
+        n += 1
+    if headers.get("type", "").strip() != "record":
+        raise err("not a kosha record file (no HEADER:type=record)", 1)
+    if not columns:
+        raise err("no columns (no HEADER:.A=<column name> lines)", 1)
+
+    known = {a for a, _ in columns}
+    records, rec, field = [], None, None
+    for n in range(n, len(lines)):
+        line = lines[n]
+        if line == MARKER or line.startswith(MARKER + " "):
+            rec, field = {}, None
+            records.append((n + 1, rec))
+        elif line.startswith("."):
+            name, sep, value = line[1:].partition(": ")
+            if not sep:
+                raise err(f"bad line {line[:60]!r}: a line starting with '.' must be a "
+                          f"'{MARKER} ...' record marker or a '.<short name>: value' field", n + 1)
+            if rec is None:
+                raise err(f"field before the first '{MARKER}' record marker", n + 1)
+            if name not in known:
+                raise err(f"unknown short name {name!r} (no HEADER:.{name}= line)", n + 1)
+            if name in rec:
+                raise err(f"column {name!r} given twice in one record", n + 1)
+            field = name
+            rec[name] = [value]
+        elif field is not None:
+            rec[field].append(line)
+        elif line.strip():
+            raise err(f"text outside a field (expected '{MARKER} ...' or "
+                      "'.<short name>: value')", n + 1)
+    return columns, [(ln, {a: "\n".join(v).rstrip() for a, v in r.items()})
+                     for ln, r in records]
+
+
 def read_table(path: Path, columns: dict, placeholders) -> list:
-    """Returns rows as {field: value, '_line': n}, columns found by header."""
+    """Returns rows as {field: value, '_line': n} (n: the record marker's
+    line), columns found by their name in the HEADER:.X= lines."""
     placeholders = {str(p).strip() for p in placeholders}
     try:
-        f = open(path, "r", encoding="utf-8", newline="")
+        text = path.read_text(encoding="utf-8-sig")
     except OSError as e:
         raise DictionaryBuildError(f"cannot read: {e}", file=path)
-    with f:
-        reader = csv.reader(f)
-        header = [h.strip() for h in next(reader, [])]
-        index = {}
-        for field, name in columns.items():
-            if name not in header:
-                raise DictionaryBuildError(
-                    f"no column '{name}' (for '{field}'); columns are {header}", file=path, line=1)
-            index[field] = header.index(name)
+    header, records = parse_record_file(text, path)
+    names = [name for _, name in header]
+    short = {}
+    for field, name in columns.items():
+        found = [a for a, n in header if n == name]
+        if not found:
+            raise DictionaryBuildError(
+                f"no column '{name}' (for '{field}'); columns are {names}", file=path, line=1)
+        if len(found) > 1:
+            raise DictionaryBuildError(
+                f"column '{name}' (for '{field}') appears {len(found)} times "
+                f"(short names {', '.join(found)})", file=path, line=1)
+        short[field] = found[0]
 
-        rows = []
-        for line_no, row in enumerate(reader, start=2):
-            if not any(c.strip() for c in row):
-                continue
-            rec = {"_line": line_no}
-            for field, i in index.items():
-                value = row[i].strip() if i < len(row) else ""
-                rec[field] = "" if value in placeholders else value
-            rows.append(rec)
+    rows = []
+    for line_no, cells in records:
+        if not any(v.strip() for v in cells.values()):
+            continue
+        rec = {"_line": line_no}
+        for field, a in short.items():
+            value = cells.get(a, "").strip()
+            rec[field] = "" if value in placeholders else value
+        rows.append(rec)
     return rows
 
 
@@ -369,7 +446,7 @@ class Converter:
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--data", type=Path, help="directory with the five CSV files "
+    p.add_argument("--data", type=Path, help="directory with the five record files "
                    f"({', '.join(DEFAULT_FILES.values())})")
     for table in DEFAULT_FILES:
         p.add_argument(f"--{table}", type=Path, help=f"override {DEFAULT_FILES[table]}")

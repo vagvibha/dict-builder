@@ -1,4 +1,6 @@
 """Tests for scripts/converters/amarakosha_to_notes.py."""
+import csv
+import io
 import re
 import subprocess
 import sys
@@ -51,10 +53,46 @@ FILES = {"shlokas": SHLOKAS_CSV, "words": WORDS_CSV, "sudha": SUDHA_CSV,
          "kshirasvami": KS_CSV, "vargas": VARGAS_CSV}
 
 
+def letter(i: int) -> str:
+    s, i = "", i + 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def to_record(csv_text: str, short=None) -> str:
+    """CSV fixture (row 1 = column names) -> a kosha record file, as
+    vagvibha/kosha scripts/records.py writes it. `short`: short names to
+    use instead of A, B, ... (fields are written in short-name order)."""
+    header, *rows = list(csv.reader(io.StringIO(csv_text)))
+    short = short or [letter(j) for j in range(len(header))]
+    order = sorted(range(len(header)), key=lambda j: (len(short[j]), short[j]))
+    out = ["# GENERATED (test)", "HEADER:type=record", f"HEADER:key={header[0]}"]
+    out += [f"HEADER:.{short[j]}={h}" for j, h in enumerate(header)]
+    for row in rows:
+        if not any(row):
+            continue
+        out += ["", f".--- {row[0]}".rstrip()]
+        for j in order:
+            if j < len(row) and row[j]:
+                first, *rest = row[j].split("\n")
+                out.append(f".{short[j]}: {first}")
+                out.extend(rest)
+    return "\n".join(out) + "\n"
+
+
+def marker_line(text: str, n: int) -> int:
+    """File line of the n-th (1-based) record marker."""
+    lines = [i for i, l in enumerate(text.split("\n"), start=1) if l.startswith(".---")]
+    return lines[n - 1]
+
+
 def write_data(d: Path, **override) -> Path:
-    """Writes the five CSVs under their default names into d."""
+    """Writes the five tables (CSV fixtures as record files) under their
+    default names into d."""
     for table, text in {**FILES, **override}.items():
-        write(d / ak.DEFAULT_FILES[table], text)
+        write(d / ak.DEFAULT_FILES[table], to_record(text))
     return d
 
 
@@ -74,7 +112,7 @@ class _Tmp(unittest.TestCase):
         self._tmp.cleanup()
 
     def convert(self, lax=False, only_varga=None, **override):
-        """override: table -> replacement CSV text."""
+        """override: table -> replacement CSV fixture text."""
         data = write_data(self.d / "override", **override) if override else self.data
         cols, ph = self.cfg["columns"], self.cfg["placeholder_values"]
         files = {t: data / name for t, name in ak.DEFAULT_FILES.items()}
@@ -125,19 +163,61 @@ class TestConfig(_Tmp):
             ak.load_config(self.d / "c.yaml")
 
     def test_missing_column(self):
-        write(self.d / "s.csv", "संख्या,text\n1.1.1,क॥\n")
+        write(self.d / "s.txt", to_record("संख्या,text\n1.1.1,क॥\n"))
         with self.assertRaises(DictionaryBuildError) as ctx:
-            ak.read_table(self.d / "s.csv", self.cfg["columns"]["shlokas"], [])
+            ak.read_table(self.d / "s.txt", self.cfg["columns"]["shlokas"], [])
         self.assertIn("श्लोकः", str(ctx.exception))
         self.assertEqual(ctx.exception.line, 1)
 
-    def test_columns_by_header_and_placeholders(self):
-        rows = ak.read_table(self.data / "words.csv", self.cfg["columns"]["words"], [])
+    def test_repeated_column_name(self):
+        write(self.d / "s.txt", to_record("संख्या,श्लोकः,श्लोकः\n1.1.1,क॥,ख॥\n"))
+        with self.assertRaises(DictionaryBuildError) as ctx:
+            ak.read_table(self.d / "s.txt", self.cfg["columns"]["shlokas"], [])
+        self.assertIn("appears 2 times", str(ctx.exception))
+
+    def test_columns_by_name_and_placeholders(self):
+        text = (self.data / "words.txt").read_text(encoding="utf-8")
+        rows = ak.read_table(self.data / "words.txt", self.cfg["columns"]["words"], [])
         self.assertEqual(rows[1]["word"], "बुद्धि")
         self.assertEqual(rows[1]["kshirasvami"], "k1, k3")
-        self.assertEqual(rows[1]["_line"], 3)
-        ks = ak.read_table(self.data / "ks_words.csv", self.cfg["columns"]["kshirasvami"], ["#N/A"])
-        self.assertEqual(ks[1], {"_line": 3, "id": "k2", "text": ""})
+        self.assertEqual(rows[1]["_line"], marker_line(text, 2))
+        ks_text = (self.data / "ks_words.txt").read_text(encoding="utf-8")
+        ks = ak.read_table(self.data / "ks_words.txt", self.cfg["columns"]["kshirasvami"], ["#N/A"])
+        self.assertEqual(ks[1], {"_line": marker_line(ks_text, 2), "id": "k2", "text": ""})
+
+    def test_short_names_not_in_column_order(self):
+        """Short names are only a mapping: what counts is HEADER:.X=<name>."""
+        text = to_record(SHLOKAS_CSV, short=["C", "A", "B"])
+        self.assertIn("HEADER:.C=संख्या", text)
+        write(self.d / "s.txt", text)
+        rows = ak.read_table(self.d / "s.txt", self.cfg["columns"]["shlokas"], [])
+        self.assertEqual(rows[0]["ref"], "1.04.31")
+        self.assertTrue(rows[0]["text"].startswith("चित्तं"))
+
+    def test_multiline_cell(self):
+        write(self.d / "s.txt", to_record('संख्या,श्लोकः\n1.1.1,"क।\nख॥"\n'))
+        rows = ak.read_table(self.d / "s.txt", self.cfg["columns"]["shlokas"], [])
+        self.assertEqual(rows[0]["text"], "क।\nख॥")
+
+    def test_bad_record_files(self):
+        good = to_record("संख्या,श्लोकः\n1.1.1,क॥\n")
+        cases = {
+            "not a kosha record file": (good.replace("HEADER:type=record\n", ""), 1),
+            "unknown short name 'Z'": (good + ".Z: x\n", None),
+            "given twice in one record": (good + ".B: x\n", None),
+            "text outside a field": (good.replace(".--- 1.1.1\n", ".--- 1.1.1\nstray\n"), None),
+            "bad line": (good + ".nofield\n", None),
+            "no columns": ("HEADER:type=record\n\n.--- x\n", 1),
+        }
+        for msg, (text, line) in cases.items():
+            with self.subTest(msg):
+                write(self.d / "bad.txt", text)
+                with self.assertRaises(DictionaryBuildError) as ctx:
+                    ak.read_table(self.d / "bad.txt", self.cfg["columns"]["shlokas"], [])
+                self.assertIn(msg, str(ctx.exception))
+                self.assertIsNotNone(ctx.exception.line)
+                if line:
+                    self.assertEqual(ctx.exception.line, line)
 
 
 class TestConversion(_Tmp):
@@ -219,7 +299,7 @@ class TestProblems(_Tmp):
         words = WORDS_CSV + "अ,किम्,2.1.1,1.1,,,,,,\n"
         with self.assertRaises(DictionaryBuildError) as ctx:
             self.convert(words=words)
-        self.assertIn("words.csv:8", str(ctx.exception))
+        self.assertIn(f"words.txt:{marker_line(to_record(words), 7)}", str(ctx.exception))
         text, warnings = self.convert(words=words, lax=True)
         self.assertTrue(any("2.1.1" in w for w in warnings))
         self.assertIn("- किम्", text)
@@ -228,7 +308,7 @@ class TestProblems(_Tmp):
         words = WORDS_CSV.replace(",s3,", ",s9,")
         with self.assertRaises(DictionaryBuildError) as ctx:
             self.convert(words=words)
-        self.assertIn("sudha id 's9' of 'मेधा' is not in sudha.csv", str(ctx.exception))
+        self.assertIn("sudha id 's9' of 'मेधा' is not in sudha.txt", str(ctx.exception))
         _, warnings = self.convert(words=words, lax=True)
         self.assertEqual(len(warnings), 1)
 
@@ -236,15 +316,16 @@ class TestProblems(_Tmp):
         vargas = VARGAS_CSV.replace("1.04,कालवर्गः\n", "")
         with self.assertRaises(DictionaryBuildError) as ctx:
             self.convert(vargas=vargas)
-        self.assertIn("varga 1.4 is not in vargas.csv", str(ctx.exception))
+        self.assertIn("varga 1.4 is not in vargas.txt", str(ctx.exception))
 
     def test_duplicates(self):
         cases = {
-            "verse": ("shlokas", SHLOKAS_CSV + "1.5.1,दुप॥,\n", 6),
-            "sudha id": ("sudha", SUDHA_CSV + "s1,x,y,,\n", 7),
-            "varga": ("vargas", VARGAS_CSV + "1.05,x\n", 5),
+            "verse": ("shlokas", SHLOKAS_CSV + "1.5.1,दुप॥,\n", 5),
+            "sudha id": ("sudha", SUDHA_CSV + "s1,x,y,,\n", 6),
+            "varga": ("vargas", VARGAS_CSV + "1.05,x\n", 4),
         }
-        for label, (table, text, line) in cases.items():
+        for label, (table, text, n) in cases.items():
+            line = marker_line(to_record(text), n)
             with self.subTest(label):
                 with self.assertRaises(DictionaryBuildError) as ctx:
                     self.convert(**{table: text})
@@ -252,9 +333,10 @@ class TestProblems(_Tmp):
                 self.assertEqual(ctx.exception.line, line)
 
     def test_bad_reference(self):
+        shlokas = SHLOKAS_CSV + "1.5,क॥,\n"
         with self.assertRaises(DictionaryBuildError) as ctx:
-            self.convert(shlokas=SHLOKAS_CSV + "1.5,क॥,\n")
-        self.assertEqual(ctx.exception.line, 6)
+            self.convert(shlokas=shlokas)
+        self.assertEqual(ctx.exception.line, marker_line(to_record(shlokas), 5))
 
     def test_bad_headword(self):
         with self.assertRaises(DictionaryBuildError):
@@ -278,14 +360,14 @@ class TestCli(_Tmp):
         self.assertIn("- e:AK-1-05-001", out.read_text(encoding="utf-8"))
 
     def test_single_file_override(self):
-        write(self.d / "v.csv", VARGAS_CSV.replace("धीवर्गः", "बुद्धिवर्गः"))
+        write(self.d / "v.txt", to_record(VARGAS_CSV.replace("धीवर्गः", "बुद्धिवर्गः")))
         out = self.d / "o.txt"
-        res = run_cli("--data", self.data, "--vargas", self.d / "v.csv", "--output", out)
+        res = run_cli("--data", self.data, "--vargas", self.d / "v.txt", "--output", out)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("[बुद्धिवर्गः]", out.read_text(encoding="utf-8"))
 
     def test_needs_data_or_files(self):
-        res = run_cli("--words", self.data / "words.csv", "--output", self.d / "o.txt")
+        res = run_cli("--words", self.data / "words.txt", "--output", self.d / "o.txt")
         self.assertEqual(res.returncode, 2)
         self.assertIn("--data", res.stderr)
 
@@ -306,12 +388,11 @@ class TestCli(_Tmp):
         self.assertIn("AK-1-04-031", res.stderr)
 
     def test_data_error_exit_code(self):
-        write(self.data / "shlokas.csv", "संख्या,श्लोकः\n1.1.1,क॥\n")   # varga 1.01 missing
-        write(self.d / "s.csv", "संख्या\n")
-        res = run_cli("--data", self.data, "--shlokas", self.d / "s.csv",
+        write(self.d / "s.txt", to_record("संख्या\n1.1.1\n"))   # no श्लोकः column
+        res = run_cli("--data", self.data, "--shlokas", self.d / "s.txt",
                       "--output", self.d / "o.txt")
         self.assertEqual(res.returncode, 2)
-        self.assertIn("s.csv:1", res.stderr)
+        self.assertIn("s.txt:1", res.stderr)
         self.assertFalse((self.d / "o.txt").exists())
 
 
