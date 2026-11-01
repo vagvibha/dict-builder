@@ -297,17 +297,18 @@ class TestBuildScript(_TempDirTest):
                          "amarakosha.txt: 10, 10\nTOTAL: 10, 10 (synonly: 0)\n")
 
         # A data error in the inputs stops the build.
-        write(self.ws / "external/kosha/ak/shlokas.csv", "संख्या,श्लोकः\n")
+        from tests.test_amarakosha import to_record
+        write(self.ws / "external/kosha/ak/shlokas.txt", to_record("संख्या,श्लोकः\n"))
         res = self.run_build(env=env)
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("no verses", res.stderr)
 
     def test_data_only_sparse_source(self):
-        from tests.test_amarakosha import FILES
+        from tests.test_amarakosha import FILES, to_record
         from tests.test_plan import make_git_repo
         import amarakosha_to_notes as ak
         upstream = self.root / "kosha"
-        make_git_repo(upstream, {**{f"data/amarakosha/{ak.DEFAULT_FILES[t]}": text
+        make_git_repo(upstream, {**{f"data/amarakosha/{ak.DEFAULT_FILES[t]}": to_record(text)
                                     for t, text in FILES.items()},
                                  "data/other/big.csv": "x"})
         write(self.ws / "contents/meta.yaml",
