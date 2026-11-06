@@ -95,6 +95,19 @@ class TestNotes(unittest.TestCase):
     def test_key_only_record(self):
         self.assertEqual(self.h.process_stream("- k", {})[0]['entry'], '<br><br>k<br>[unknown]')
 
+    def test_hindi_line_left_out(self):
+        res = self.h.process_stream("- a\nline1\n{{हिन्दी वाक्य}}\nline2\n  {{दूसरा}}  ", {'title': 'N'})
+        self.assertEqual(res[0]['entry'], '<br>line1<br>line2<br>a<br>[N]')
+
+    def test_inline_double_braces_kept(self):
+        res = self.h.process_stream("- a\ntext {{not a line}} more", {'title': 'N'})
+        self.assertIn('{{not a line}}', res[0]['entry'])
+
+    def test_unclosed_hindi_line_is_an_error(self):
+        with self.assertRaises(DictionaryBuildError) as cm:
+            self.h.process_stream("- a\n{{open", {})
+        self.assertIn("must end with", str(cm.exception))
+
     def test_empty(self):
         self.assertEqual(self.h.process_stream("   ", {}), [])
         self.assertEqual(self.h.process_stream("\n\n", {}), [])
@@ -166,6 +179,14 @@ class TestShloka(unittest.TestCase):
 
     def test_plus_line_hidden_from_entry(self):
         self.assertNotIn("+ x", self.entry("a\n====\n+ x\nnote"))
+
+    def test_hindi_line_hidden_from_entry(self):
+        text = "a b ॥१॥\n====\n+ x\n{{हिन्दी}}\nnote"
+        self.assertEqual(self.entry(text, {'title': 'T'}), 'a b ॥१॥<br>====<br>note<br>[T]')
+        self.assertEqual(self.words(text), ['a', 'b', 'x'])
+
+    def test_hindi_line_only_no_separator(self):
+        self.assertEqual(self.entry("a b\n====\n+ x\n{{हिन्दी}}", {'title': 'T'}), 'a b<br>[T]')
 
     def test_minus_excludes(self):
         self.assertEqual(self.words("a b c\n====\n- b; c"), ['a'])

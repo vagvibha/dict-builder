@@ -7,6 +7,23 @@ from markup import strip_bold_tags
 import transliteration
 
 
+# A line that is just '{{…}}' (a Hindi gloss / card candidate, read by other
+# tools such as cds-study and the flashcard reports) is never part of a
+# notes or shloka entry, the same as the '{{…}}' tail of a one-liner.
+HINDI_LINE_RE = re.compile(r'^\s*\{\{.*\}\}\s*$')
+
+
+def is_hindi_line(line: str) -> bool:
+    """True for a '{{…}}' line. A line that starts with '{{' but doesn't
+    end with '}}' is an error: it would otherwise end up in the entry."""
+    if HINDI_LINE_RE.match(line):
+        return True
+    if line.lstrip().startswith('{{'):
+        raise ValueError(f"a line starting with '{{{{' must end with '}}}}' (a '{{{{…}}}}' line is left "
+                         f"out of the entry): {line.strip()!r}")
+    return False
+
+
 class HandlerFactory:
     KNOWN_TYPES = KNOWN_TYPES
 
@@ -258,6 +275,8 @@ class NotesInputHandler(BaseInputHandler):
 
         words_line = words_line.strip(' -')
         raw_tokens = [w.strip() for w in words_line.split(';') if w.strip()]
+        # '{{…}}' lines (Hindi gloss) are for other tools, not the entry
+        raw_notes = '\n'.join(ln for ln in raw_notes.split('\n') if not is_hindi_line(ln))
         formatted_notes = raw_notes.replace('\n', '<br>')
 
         return raw_tokens, f"<br>{formatted_notes}"
@@ -341,6 +360,9 @@ class ShlokaInputHandler(BaseInputHandler):
             if not note:
                 # preserve empty lines
                 non_meta_notes.append(note)
+                continue
+            if is_hindi_line(note):
+                # '{{…}}' (Hindi gloss): for other tools, not the entry
                 continue
             if note[0:2] == "- ":
                 excluded_words.extend([word.strip()

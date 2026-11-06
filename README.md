@@ -147,7 +147,10 @@ like `[Gita][Bhashya]` sets the source for the lines that follow.
 
 ### notes
 A record starts with a line `- k1;k2`; every following line, up to the
-next line starting with `-`, is the entry.
+next line starting with `-`, is the entry. A line that is just `{{…}}`
+(a Hindi gloss, read by other tools) is left out of the entry, like the
+`{{…}}` part of a one-liner; a line that starts with `{{` but doesn't end
+with `}}` is an error.
 
 ### shloka
 Records are separated by a blank line: the verse, optionally followed by
@@ -160,6 +163,7 @@ separator and verse numbers dropped. Special lines in the notes part:
 | `- w1; w2` | don't use these words as keys; `all` = no keys from the verse; `nokey` = no shlokakey |
 | `+ k1;k2` | extra keys, used as written |
 | `++ anvaya text` | keys from these words **instead of** the verse; punctuation and `(…)` are ignored; the line stays in the entry unless `HEADER:show_anvaya=false` |
+| `{{…}}` | left out of the entry (a Hindi gloss, read by other tools); a line starting with `{{` must end with `}}` |
 
 `HEADER:auto_shloka=false` turns off keys from the verse text entirely
 (only `+`/`++` supply keys). `HEADER:show_anvaya=false` keeps
