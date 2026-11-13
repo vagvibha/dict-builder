@@ -12,7 +12,8 @@ pip install -r requirements.txt        # pyglossary, pyyaml
 # plus dictzip: `brew install dictzip` / `apt-get install dictzip`
 
 # from the content workspace root:
-bash tools/scripts/build_dictionaries.sh            # or --workspace DIR, --content-dir DIR
+bash tools/scripts/build_dictionaries.sh            # or --workspace DIR, --content-dir DIR,
+                                                    #    --stats-dir DIR
 # offline / reuse already-fetched external sources:
 SKIP_FETCH=1 bash tools/scripts/build_dictionaries.sh
 
@@ -72,6 +73,26 @@ generated:
            --config, config/amarakosha.yaml]    # --config optional
     meta: {name: Amarakosha}                    # optional; default name=<id>, type=notes
 ```
+
+A converter that writes several dictionaries in one run lists them under
+`outputs:` instead of `id`/`meta`. It gets `--output-dir DIR` appended and
+writes `DIR/<part>.txt` per part; each listed part becomes
+`build/generated/<id>/<id>.txt`. Parts it writes but you don't list are
+dropped; a listed part it didn't write is an error.
+
+```yaml
+  - converter: ashtadhyayi_sutras
+    args: [--data, external/ac/sutraani]
+    outputs:
+      - {id: ac-kashika, part: kashika, meta: {name: AC Kashika}}
+      - vasu                                    # shorthand: id = part
+```
+
+**Separate builds.** Each `--content-dir` is its own build (its own
+`meta.yaml`), e.g. one built daily and others built on demand. Give each
+its own `--stats-dir` (default `stats`): a build removes the stats of
+dictionaries it no longer makes, so a shared stats dir would lose the
+other builds' files.
 
 A converter usually reads a **data-only source** (`build: false`): it is
 fetched like any other source (latest of `ref`, recorded in
@@ -219,7 +240,7 @@ Rules for the sheet: a cell's second and later lines can't start with
 
 `scripts/converters/` holds standalone scripts that turn data kept in some
 other shape (spreadsheet exports etc.) into one of the input formats above.
-Each takes `--output FILE`, exits 2 with a `file:line` message on a data
+Each takes `--output FILE` (or `--output-dir DIR` for multi-part ones), exits 2 with a `file:line` message on a data
 problem, and can be run by hand or from `generated:`.
 
 **`amarakosha_to_notes.py`** reads the Amarakosha master data from
@@ -235,6 +256,28 @@ commentary id or varga that isn't in its file, is an error.
 `--debug --varga 1.05` converts one varga and turns those errors into
 warnings, for checking output.
 
+**`ashtadhyayi_sutras.py`** and **`ashtadhyayi_dhatus.py`** read the JSON
+data of [ashtadhyayi-com/data](https://github.com/ashtadhyayi-com/data)
+(`--data` = its `sutraani/` or `dhatu/` folder) and write `notes` parts
+into `--output-dir` (`--parts a,b` limits them). Configs:
+`converters/config/ashtadhyayi_{sutras,dhatus}.yaml`.
+
+- sutras: `sutra` (an entry per sutra: number `१.१.०६३`, sutra,
+  padaccheda, anuvṛtti links, artha; whether padaccheda words are keys is
+  set by `padaccheda_keys: none | declined | all`), `artha` (short then
+  detailed sutrārtha) and one part per commentary (`kashika`, `kaumudi`,
+  `vasu`). All are keyed by number and sutra, so a lookup shows them
+  together. Sutra references in the text (`[[७.२.१]]`, `<{SK12}>`) become
+  links to the `sutra` part; unresolvable ones stay as text, with a warning.
+- dhatus: `dhatu` (an entry per dhatu, keys dhatu / aupadeśika / artha /
+  `कृ-धातु`, linking to its other entries; plus an entry per dhatu +
+  upasarga, e.g. `प्रे` for प्र + इ), five kṛdanta parts (`shuddha-`,
+  `nic-`, `san-`, `yang-`, `yangluk-krdanta`: `कृ-कृत्`, only the pratyayas
+  in `krt.include`) and ten lakāra parts (`<same>-kartari` / `-karmani`:
+  `कृ-कर्तरि` lists the lakāras; `कृ-कर्तरि-लट्` has the forms). A dhatu
+  that occurs more than once is named `भू-१` (gaṇa) or `सिध्-१.४९`
+  (gaṇa.number) in those keys.
+
 ## Versioning
 
 The `.ifo` `description` is the version (`YYYYMMDD-HHMM:PST`). A dictionary
@@ -242,3 +285,12 @@ only gets a new version if its content differs from the previously
 published copy in `PUBLISHED_DIR` (default `<workspace>/dictionaries`).
 The comparison ignores the `description` line and the gzip header of
 `*.dz` files. An unchanged dictionary reuses the published files exactly.
+
+## Publishing several builds into one tree
+
+`scripts/merge_published.py --published DIR --build build/stardict --group NAME --out DIR`
+merges one build's dictionaries into a published tree shared by several
+builds (`dictionaries/<id>/`, plus `groups/<group>.txt` listing the ids
+each build owns). Only this group's dictionaries are replaced or removed;
+an id owned by another group is an error. It prints `changed` or
+`unchanged`, so CI can skip publishing when nothing differs.

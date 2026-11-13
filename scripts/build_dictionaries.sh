@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Builds every dictionary for a content workspace.
 #
-# Usage: build_dictionaries.sh [--workspace DIR] [--content-dir DIR]
+# Usage: build_dictionaries.sh [--workspace DIR] [--content-dir DIR] [--stats-dir DIR]
 #   --workspace    default: current dir
 #   --content-dir  relative to the workspace; default: contents
+#   --stats-dir    relative to the workspace; default: stats. Stats of
+#                  dictionaries this build no longer makes are removed from
+#                  it, so give each separately built content dir its own.
 #
 # The workspace must contain <content-dir>/meta.yaml (see plan.py for the
 # format). Everything the build produces lives in the workspace:
@@ -12,7 +15,7 @@
 #   build/stardict/<id>/      StarDict output
 #   build/sources.txt         "<source> <repo> <sha>" for each fetched source
 #   build/changed_dictionaries.txt
-#   stats/<id>.stats          per-dictionary stats (commit these)
+#   <stats-dir>/<id>.stats    per-dictionary stats (commit these)
 #
 # Versioning: a dictionary gets a new version (the .ifo 'description') only
 # if its content differs from the previously published copy in
@@ -27,10 +30,12 @@ SCRIPTS="${CODE_ROOT}/scripts"
 
 WORKSPACE="${PWD}"
 CONTENT_DIR="contents"
+STATS_SUBDIR="stats"
 while [ $# -gt 0 ]; do
     case "$1" in
         --workspace) WORKSPACE="$2"; shift 2 ;;
         --content-dir) CONTENT_DIR="$2"; shift 2 ;;
+        --stats-dir) STATS_SUBDIR="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -44,7 +49,7 @@ PLAN_ARGS=(--workspace "${WORKSPACE}" --content-dir "${CONTENT_DIR}")
 
 BUILD_DIR="${WORKSPACE}/build"
 STARDICT_DIR="${BUILD_DIR}/stardict"
-STATS_DIR="${WORKSPACE}/stats"
+STATS_DIR="${WORKSPACE}/${STATS_SUBDIR}"
 PUBLISHED_DIR="${PUBLISHED_DIR:-${WORKSPACE}/dictionaries}"
 
 rm -rf "${STARDICT_DIR}"

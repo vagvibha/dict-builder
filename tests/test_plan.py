@@ -149,7 +149,16 @@ class TestGenerated(_Workspace):
         gen = load_workspace_config(self.content)["generated"][0]
         self.assertEqual(gen, {"id": "ak", "converter": "amarakosha_to_notes",
                                "args": ["--data", "external/kosha/ak"],
-                               "meta": {"name": "Amarakosha"}})
+                               "outputs": [{"id": "ak", "part": None,
+                                            "meta": {"name": "Amarakosha"}}]})
+
+    def test_outputs_config(self):
+        self.config("generated:\n  - converter: amarakosha_to_notes\n    outputs:\n"
+                    "      - plain\n      - {id: v-k, part: k, meta: {name: K}}\n")
+        gen = load_workspace_config(self.content)["generated"][0]
+        self.assertIsNone(gen["id"])
+        self.assertEqual(gen["outputs"], [{"id": "plain", "part": "plain", "meta": {}},
+                                          {"id": "v-k", "part": "k", "meta": {"name": "K"}}])
 
     def test_config_errors(self):
         cases = {
@@ -160,6 +169,15 @@ class TestGenerated(_Workspace):
             "bad type": "generated:\n  - {id: a, converter: amarakosha_to_notes, "
                         "meta: {type: bogus}}\n",
             "unknown key": "generated:\n  - {id: a, converter: amarakosha_to_notes, x: 1}\n",
+            "id and outputs": "generated:\n  - {id: a, converter: amarakosha_to_notes, "
+                              "outputs: [b]}\n",
+            "empty outputs": "generated:\n  - {converter: amarakosha_to_notes, outputs: []}\n",
+            "bad output id": "generated:\n  - {converter: amarakosha_to_notes, "
+                             "outputs: ['a b']}\n",
+            "dup parts": "generated:\n  - {converter: amarakosha_to_notes, "
+                         "outputs: [{id: a, part: p}, {id: b, part: p}]}\n",
+            "output unknown key": "generated:\n  - {converter: amarakosha_to_notes, "
+                                  "outputs: [{id: a, x: 1}]}\n",
         }
         for label, text in cases.items():
             with self.subTest(label):
@@ -188,6 +206,49 @@ class TestGenerated(_Workspace):
         with self.assertRaises(DictionaryBuildError) as ctx:
             generate(self.ws, self.content, self.ws / "build/generated")
         self.assertIn("amarakosha_to_notes", str(ctx.exception))
+
+
+FAKE_MULTI = """import argparse, pathlib
+p = argparse.ArgumentParser(); p.add_argument("--output-dir", required=True)
+p.add_argument("--parts", default="one,two")
+a = p.parse_args()
+for part in a.parts.split(","):
+    (pathlib.Path(a.output_dir) / f"{part}.txt").write_text(f"- {part}\\nbody\\n")
+"""
+
+
+class TestGeneratedMulti(_Workspace):
+    """A multi-output converter, faked in a temporary converters dir."""
+    def setUp(self):
+        super().setUp()
+        import plan
+        self._orig = plan.CONVERTERS_DIR
+        plan.CONVERTERS_DIR = self.ws / "converters"
+        write(plan.CONVERTERS_DIR / "fake_multi.py", FAKE_MULTI)
+
+    def tearDown(self):
+        import plan
+        plan.CONVERTERS_DIR = self._orig
+        super().tearDown()
+
+    def test_generate_selected_parts(self):
+        self.config("generated:\n  - converter: fake_multi\n    outputs:\n"
+                    "      - {id: d-one, part: one, meta: {name: One}}\n")
+        gen_dir = self.ws / "build/generated"
+        self.assertEqual(generate(self.ws, self.content, gen_dir), ["d-one"])
+        # 'two' was written by the converter but isn't listed: dropped.
+        self.assertEqual(sorted(p.name for p in gen_dir.iterdir()), ["d-one"])
+        self.assertEqual((gen_dir / "d-one/d-one.txt").read_text(), "- one\nbody\n")
+        plan_ = build_plan(self.content, self.external, gen_dir)
+        self.assertEqual([(e["id"], e["meta_defaults"]) for e in plan_],
+                         [("d-one", {"name": "One", "type": "notes"})])
+
+    def test_missing_part(self):
+        self.config("generated:\n  - converter: fake_multi\n    args: [--parts, one]\n"
+                    "    outputs: [one, two]\n")
+        with self.assertRaises(DictionaryBuildError) as ctx:
+            generate(self.ws, self.content, self.ws / "build/generated")
+        self.assertIn("'two'", str(ctx.exception))
 
 
 class TestFetch(_Workspace):

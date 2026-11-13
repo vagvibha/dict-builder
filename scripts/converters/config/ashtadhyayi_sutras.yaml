@@ -1,0 +1,57 @@
+# Default config for ashtadhyayi_sutras.py.
+# Files are relative to --data (the 'sutraani' folder of
+# https://github.com/ashtadhyayi-com/data).
+
+base: data.txt                # the sutras: {"data": [{i, a, p, n, s, pc, type, an, ss, skn ...}]}
+
+# HEADER:title of the 'sutra' part (shown as the [source] of every entry).
+sutra_title: अष्टाध्यायी
+
+# The 'artha' part: {"<i>": {"sa": short, "sd": detailed}}. Entry: bold
+# short artha, then the detailed one.
+artha: {file: sutrartha.txt, label: सूत्रार्थः}
+
+# One part per commentary: {"<i>": "<text>"}. Adding another commentary
+# from the same folder (e.g. balamanorama.txt) is just another entry here
+# plus an 'outputs:' line in the content repo's meta.yaml.
+commentaries:
+  kashika: {file: kashika.txt, label: काशिका}
+  kaumudi: {file: kaumudi.txt, label: कौमुदी}
+  vasu:    {file: vasu_english.txt, label: Vasu}
+
+# 'type' kinds whose names become keys of the sutra entry.
+key_types: [S, P]
+
+# Padaccheda: vibhakti '0' is an avyaya.
+avyaya_label: अ०
+
+# Which padaccheda words become keys of the sutra entry:
+#   none      no padaccheda keys
+#   declined  all but avyayas (न, च, वा ... would each match hundreds of sutras)
+#   all       every word
+padaccheda_keys: declined
+
+# The ashtadhyayi.com markup tags in sutrartha/commentary text, mapped to
+# what the dictionary shows. Values: b, i, u = keep as that HTML tag;
+# bline = bold, on its own line;
+# bullet = new line starting "• "; line = put on its own line;
+# br = line break; strip = drop the tag, keep its text. Unknown tags: strip.
+tags:
+  b: b
+  i: i
+  u: u
+  hl: b
+  hlb: bline
+  title: bline
+  qt: i
+  ex: i
+  nex: i
+  li: bullet
+  br: br
+  pr: line
+  list: line
+  listsp: line
+  note: line
+  light: line
+  karika: line
+  tr: line

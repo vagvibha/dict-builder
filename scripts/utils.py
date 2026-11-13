@@ -194,9 +194,13 @@ def split_with_line_numbers(text: str, sep: str) -> list:
 
     results = []
     start = 0
+    # Count newlines incrementally (counting from 0 each time made this
+    # quadratic: minutes for a multi-MB generated file).
+    counted_to, line_no = 0, 1
     while True:
         idx = text.find(sep, start)
-        line_no = text.count('\n', 0, start) + 1
+        line_no += text.count('\n', counted_to, start)
+        counted_to = start
         if idx == -1:
             chunk = text[start:]
             if chunk.strip():

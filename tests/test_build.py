@@ -327,6 +327,16 @@ class TestBuildScript(_TempDirTest):
         self.assertFalse((self.ws / "stats/gone.stats").exists())
         self.assertTrue((self.ws / "stats/test.stats").exists())
 
+    def test_stats_dir_option(self):
+        # A separately built content dir keeps its stats apart: the default
+        # stats dir (another build's) is left alone.
+        write(self.ws / "stats/other.stats", "keep")
+        res = self.run_build("--stats-dir", "stats/group")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertTrue((self.ws / "stats/group/test.stats").exists())
+        self.assertFalse((self.ws / "stats/test.stats").exists())
+        self.assertTrue((self.ws / "stats/other.stats").exists())
+
     def test_bad_dictionary_list_fails(self):
         write(self.ws / "contents/meta.yaml", "dictionaries:\n  - nosuch\n")
         res = self.run_build()

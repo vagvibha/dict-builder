@@ -1,0 +1,70 @@
+# Default config for ashtadhyayi_dhatus.py.
+# Files are relative to --data (the 'dhatu' folder of
+# https://github.com/ashtadhyayi-com/data).
+
+base: data.txt          # {"data": [{baseindex, dhatu, aupadeshik, gana, pada, ...}]}
+
+# HEADER:title of the dhatu part (the others use their 'label').
+title: धातुपाठः
+
+# Suffix of the dhatu entry's lookup key: कृ-धातु.
+dhatu_key: धातु
+
+gana_names:
+  1: भ्वादिः
+  2: अदादिः
+  3: जुहोत्यादिः
+  4: दिवादिः
+  5: स्वादिः
+  6: तुदादिः
+  7: रुधादिः
+  8: तनादिः
+  9: क्र्यादिः
+  10: चुरादिः
+pada_names: {P: परस्मैपदी, A: आत्मनेपदी, U: उभयपदी}
+karma_names: {S: सकर्मकः, A: अकर्मकः, D: द्विकर्मकः}
+settva_names: {S: सेट्, A: अनिट्, V: वेट्}
+
+# Lakara codes in the forms files: p<code> = parasmaipada, a<code> =
+# atmanepada (plat, alat, pvidhiling, aashirling ...). In this order.
+lakaras:
+  lat: लट्
+  lit: लिट्
+  lut: लुट्
+  lrut: लृट्
+  lot: लोट्
+  lang: लङ्
+  vidhiling: विधिलिङ्
+  ashirling: आशीर्लिङ्
+  lung: लुङ्
+  lrung: लृङ्
+pada_headings: {p: परस्मैपदिरूपाणि, a: आत्मनेपदिरूपाणि}
+
+krt:
+  # Only these pratyayas, shown in this order. Names are as spelled in the
+  # data (तव्यत् is 'तव्य' there). A name that matches nothing is warned about.
+  include: [क्त, क्तवतु, क्त्वा, ल्यप्, तुमुन्, शतृ, शानच्, तव्य, अनीयर्, यत्, ण्यत्, क्यप्,
+            घञ्, अच्, ल्युट्, तृच्, ण्वुल्, क्तिन्, अङ्, ल्, सन्, स्य-शतृ, स्य-शानच्,
+            भावकर्म-शानच्, स्य-भावकर्म-शानच्, णमुल्]
+
+# The parts besides 'dhatu' (dhatu entries + upasarga entries).
+# kind krt: {"<baseindex>": {"<pratyaya>": "stem,m,f,n[;stem,m,f,n]"}}
+# kind lakara: {"<baseindex>": {"plat": "f1;f2;...;f9" (alternatives with ',')}}
+# 'label' is the key part (कृ-णिच्-कृत्, कृ-णिच्-कर्तरि) and the heading.
+# The dhatu entry links to every part written, krt parts first, in this order.
+parts:
+  shuddha-krdanta:   {kind: krt,    file: dhatuforms_vidyut_shuddha_krut.txt,    label: कृत्}
+  nic-krdanta:       {kind: krt,    file: dhatuforms_vidyut_nich_krut.txt,       label: णिच्-कृत्}
+  san-krdanta:       {kind: krt,    file: dhatuforms_vidyut_san_krut.txt,        label: सन्-कृत्}
+  yang-krdanta:      {kind: krt,    file: dhatuforms_vidyut_yang_krut.txt,       label: यङ्-कृत्}
+  yangluk-krdanta:   {kind: krt,    file: dhatuforms_vidyut_yangluk_krut.txt,    label: यङ्लुक्-कृत्}
+  shuddha-kartari:   {kind: lakara, file: dhatuforms_vidyut_shuddha_kartari.txt, label: कर्तरि}
+  shuddha-karmani:   {kind: lakara, file: dhatuforms_vidyut_shuddha_karmani.txt, label: कर्मणि}
+  nic-kartari:       {kind: lakara, file: dhatuforms_vidyut_nich_kartari.txt,    label: णिच्-कर्तरि}
+  nic-karmani:       {kind: lakara, file: dhatuforms_vidyut_nich_karmani.txt,    label: णिच्-कर्मणि}
+  san-kartari:       {kind: lakara, file: dhatuforms_vidyut_san_kartari.txt,     label: सन्-कर्तरि}
+  san-karmani:       {kind: lakara, file: dhatuforms_vidyut_san_karmani.txt,     label: सन्-कर्मणि}
+  yang-kartari:      {kind: lakara, file: dhatuforms_vidyut_yang_kartari.txt,    label: यङ्-कर्तरि}
+  yang-karmani:      {kind: lakara, file: dhatuforms_vidyut_yang_karmani.txt,    label: यङ्-कर्मणि}
+  yangluk-kartari:   {kind: lakara, file: dhatuforms_vidyut_yangluk_kartari.txt, label: यङ्लुक्-कर्तरि}
+  yangluk-karmani:   {kind: lakara, file: dhatuforms_vidyut_yangluk_karmani.txt, label: यङ्लुक्-कर्मणि}

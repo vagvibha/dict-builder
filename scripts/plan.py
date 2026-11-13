@@ -25,6 +25,11 @@ contents/meta.yaml; --content-dir, relative to the workspace):
         args: [--data, external/kosha/data/amarakosha]   # relative to the
                                                          # workspace root
         meta: {name: Amarakosha}   # optional; defaults: name=<id>, type=notes
+      - converter: ashtadhyayi_sutras   # one run, several dictionaries:
+        args: [--data, external/ac/sutraani]
+        outputs:             # the converter writes <part>.txt for each part
+          - {id: ac-kashika, part: kashika, meta: {name: AC Kashika}}
+          - kashika          # shorthand: id = part
 
 The source's manifest uses the same format as <content-dir>/meta.yaml
 ('dictionaries:' list, relative to the manifest's own directory), so the
@@ -59,7 +64,8 @@ ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 DEFAULT_MANIFEST = "dict/meta.yaml"
 SOURCE_KEYS = {"name", "repo", "ref", "manifest", "suffix", "dictionaries", "defaults",
                "build", "sparse"}
-GENERATED_KEYS = {"id", "converter", "args", "meta"}
+GENERATED_KEYS = {"id", "converter", "args", "meta", "outputs"}
+OUTPUT_KEYS = {"id", "part", "meta"}
 CONVERTER_RE = re.compile(r'^[a-z0-9_]+$')
 CONVERTERS_DIR = Path(__file__).resolve().parent / "converters"
 
@@ -76,6 +82,47 @@ def _string_list(value, what, path) -> list:
     if not isinstance(value, list) or not value:
         raise DictionaryBuildError(f"'{what}' must be a non-empty list", file=path)
     return [str(v).strip() for v in value]
+
+
+def _gen_meta(meta, where, gid, meta_path) -> dict:
+    meta = meta or {}
+    if not isinstance(meta, dict):
+        raise DictionaryBuildError(f"{where} ({gid}): 'meta' must be a mapping", file=meta_path)
+    if meta.get("type") is not None and meta["type"] not in KNOWN_TYPES:
+        raise DictionaryBuildError(f"{where} ({gid}): unknown type '{meta['type']}'",
+                                   file=meta_path)
+    return meta
+
+
+def _gen_outputs(raw, where, conv, meta_path) -> list:
+    """Normalizes a multi-output entry's 'outputs:' list to
+    [{'id', 'part', 'meta'}]. An item is an id string (part = id) or a
+    mapping with 'id', optional 'part' (default: id) and 'meta'."""
+    if not isinstance(raw, list) or not raw:
+        raise DictionaryBuildError(f"{where} ({conv}): 'outputs' must be a non-empty list",
+                                   file=meta_path)
+    outputs = []
+    for j, item in enumerate(raw):
+        w = f"{where}.outputs[{j}]"
+        if not isinstance(item, dict):
+            item = {"id": item}
+        unknown = set(item) - OUTPUT_KEYS
+        if unknown:
+            raise DictionaryBuildError(f"{w}: unknown keys {sorted(unknown)}", file=meta_path)
+        oid = str(item.get("id", "")).strip()
+        if not ID_RE.match(oid):
+            raise DictionaryBuildError(f"{w}: 'id' must match {ID_RE.pattern}", file=meta_path)
+        part = str(item.get("part") or oid).strip()
+        if not ID_RE.match(part):
+            raise DictionaryBuildError(f"{w} ({oid}): 'part' must match {ID_RE.pattern}",
+                                       file=meta_path)
+        outputs.append({"id": oid, "part": part,
+                        "meta": _gen_meta(item.get("meta"), w, oid, meta_path)})
+    parts = [o["part"] for o in outputs]
+    if len(set(parts)) != len(parts):
+        raise DictionaryBuildError(f"{where} ({conv}): duplicate parts in 'outputs'",
+                                   file=meta_path)
+    return outputs
 
 
 def load_workspace_config(content_dir: Path) -> dict:
@@ -143,26 +190,33 @@ def load_workspace_config(content_dir: Path) -> dict:
         unknown = set(gen) - GENERATED_KEYS
         if unknown:
             raise DictionaryBuildError(f"{where}: unknown keys {sorted(unknown)}", file=meta_path)
-        gid = str(gen.get("id", "")).strip()
-        if not ID_RE.match(gid):
-            raise DictionaryBuildError(f"{where}: 'id' must match {ID_RE.pattern}", file=meta_path)
         conv = str(gen.get("converter", "")).strip()
+        if gen.get("outputs") is not None:
+            if gen.get("id") is not None or gen.get("meta") is not None:
+                raise DictionaryBuildError(
+                    f"{where} ({conv}): use either 'id'/'meta' or 'outputs', not both",
+                    file=meta_path)
+            gid = None
+        else:
+            gid = str(gen.get("id", "")).strip()
+            if not ID_RE.match(gid):
+                raise DictionaryBuildError(f"{where}: 'id' must match {ID_RE.pattern}",
+                                           file=meta_path)
         if not CONVERTER_RE.match(conv) or not (CONVERTERS_DIR / f"{conv}.py").is_file():
             raise DictionaryBuildError(
-                f"{where} ({gid}): unknown converter '{conv}' (expected a file "
+                f"{where} ({gid or conv}): unknown converter '{conv}' (expected a file "
                 f"scripts/converters/<name>.py)", file=meta_path)
         args = gen.get("args") or []
         if not isinstance(args, list) or not all(isinstance(a, (str, int, float)) for a in args):
-            raise DictionaryBuildError(f"{where} ({gid}): 'args' must be a list of strings",
-                                       file=meta_path)
-        meta = gen.get("meta") or {}
-        if not isinstance(meta, dict):
-            raise DictionaryBuildError(f"{where} ({gid}): 'meta' must be a mapping", file=meta_path)
-        if meta.get("type") is not None and meta["type"] not in KNOWN_TYPES:
-            raise DictionaryBuildError(f"{where} ({gid}): unknown type '{meta['type']}'",
-                                       file=meta_path)
+            raise DictionaryBuildError(f"{where} ({gid or conv}): 'args' must be a list of "
+                                       "strings", file=meta_path)
+        if gid is not None:
+            outputs = [{"id": gid, "part": None,
+                        "meta": _gen_meta(gen.get("meta"), where, gid, meta_path)}]
+        else:
+            outputs = _gen_outputs(gen["outputs"], where, conv, meta_path)
         generated.append({"id": gid, "converter": conv, "args": [str(a) for a in args],
-                          "meta": meta})
+                          "outputs": outputs})
 
     names = [s["name"] for s in sources]
     if len(set(names)) != len(names):
@@ -189,14 +243,15 @@ def build_plan(content_dir: Path, external_dir: Path, generated_dir: Path = None
         plan.append({"id": name, "dir": d, "meta_defaults": None, "source": None})
 
     for gen in cfg["generated"]:
-        d = (generated_dir or content_dir.parent / "build" / "generated") / gen["id"]
-        if not d.is_dir():
-            raise DictionaryBuildError(
-                f"generated dictionary '{gen['id']}' has not been generated (expected {d}); "
-                "run 'plan.py generate' first", file=cfg["path"])
-        plan.append({"id": gen["id"], "dir": d,
-                     "meta_defaults": {"name": gen["id"], "type": "notes", **gen["meta"]},
-                     "source": None})
+        for out in gen["outputs"]:
+            d = (generated_dir or content_dir.parent / "build" / "generated") / out["id"]
+            if not d.is_dir():
+                raise DictionaryBuildError(
+                    f"generated dictionary '{out['id']}' has not been generated (expected {d}); "
+                    "run 'plan.py generate' first", file=cfg["path"])
+            plan.append({"id": out["id"], "dir": d,
+                         "meta_defaults": {"name": out["id"], "type": "notes", **out["meta"]},
+                         "source": None})
 
     for src in cfg["sources"]:
         if not src["build"]:
@@ -285,20 +340,37 @@ def generate(workspace: Path, content_dir: Path, generated_dir: Path) -> list:
     cfg = load_workspace_config(content_dir)
     done = []
     for gen in cfg["generated"]:
-        out_dir = generated_dir / gen["id"]
-        shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True)
-        cmd = [sys.executable, str(CONVERTERS_DIR / f"{gen['converter']}.py"), *gen["args"],
-               "--output", str(out_dir / f"{gen['id']}.txt")]
+        ids = [o["id"] for o in gen["outputs"]]
+        label = gen["id"] or ", ".join(ids)
+        for oid in ids:
+            shutil.rmtree(generated_dir / oid, ignore_errors=True)
+            (generated_dir / oid).mkdir(parents=True)
+        cmd = [sys.executable, str(CONVERTERS_DIR / f"{gen['converter']}.py"), *gen["args"]]
+        if gen["id"] is not None:
+            cmd += ["--output", str(generated_dir / gen["id"] / f"{gen['id']}.txt")]
+        else:
+            scratch = generated_dir / f"_{gen['converter']}"
+            shutil.rmtree(scratch, ignore_errors=True)
+            scratch.mkdir(parents=True)
+            cmd += ["--output-dir", str(scratch)]
         res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
         if res.stderr:
             sys.stderr.write(res.stderr)
         if res.returncode != 0:
             raise DictionaryBuildError(
-                f"converter '{gen['converter']}' for '{gen['id']}' failed "
+                f"converter '{gen['converter']}' for '{label}' failed "
                 f"(exit {res.returncode})", file=cfg["path"])
-        print(f"Generated {gen['id']} ({gen['converter']})", file=sys.stderr)
-        done.append(gen["id"])
+        if gen["id"] is None:
+            for out in gen["outputs"]:
+                produced = scratch / f"{out['part']}.txt"
+                if not produced.is_file():
+                    raise DictionaryBuildError(
+                        f"converter '{gen['converter']}' did not write part '{out['part']}' "
+                        f"(for '{out['id']}')", file=cfg["path"])
+                shutil.move(str(produced), str(generated_dir / out["id"] / f"{out['id']}.txt"))
+            shutil.rmtree(scratch, ignore_errors=True)
+        print(f"Generated {label} ({gen['converter']})", file=sys.stderr)
+        done.extend(ids)
     return done
 
 
