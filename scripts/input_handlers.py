@@ -53,7 +53,6 @@ class BaseInputHandler:
         self.translator = translator
         self.exclusion_list = set(exclusion_list) if exclusion_list else set()
         self.source = "unknown"
-        self.add_words_to_record = True
         self.filename = info
 
     # --- Subclass Implementation Hooks ---
@@ -165,11 +164,6 @@ class BaseInputHandler:
             except UnmappedCharacterError as e:
                 raise DictionaryBuildError(e.message, file=self.filename, line=abs_line) from e
 
-            # Words are optionally appended to entry (so the others can
-            #     be seen during viewing - mainly to see if another hint should
-            #     have been added)
-            words_string = "; ".join(cleaned_keywords)
-
             # Clean again after translation (it can introduce case-based dupes)
             translated_words = self.clean_tokens(translated_words)
 
@@ -178,11 +172,8 @@ class BaseInputHandler:
             # which the words appear in babylon file
             translated_words.sort()
 
-            # In cases of shlokas, we don't append them, let subclass decide.
-            if self.add_words_to_record:
-                final_entry = entry_body + f"<br>{words_string}<br>[{self.source}]"
-            else:
-                final_entry = entry_body + f"<br>[{self.source}]"
+            # The keys are not shown in the entry (only the source is).
+            final_entry = entry_body + f"<br>[{self.source}]"
 
             if cleaned_keywords:
                 processed_output.append({
@@ -289,7 +280,6 @@ class ShlokaInputHandler(BaseInputHandler):
 
     def __init__(self, translator, exclusion_list=None, info=None):
         super().__init__(translator, exclusion_list, info=info)
-        self.add_words_to_record = False
 
     def split_records(self, raw_content: str) -> list:
         return utils.split_with_line_numbers(raw_content, '\n\n')

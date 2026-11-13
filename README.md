@@ -229,8 +229,7 @@ The sheet tab:
 text. `title` and `lang` become `HEADER:title` / `HEADER:lang`. A row
 whose keys cell is empty is skipped. A row with keys but no entry is an
 error, and so is a spreadsheet error value (`#N/A`, `#REF!`, …) in either
-column. Line breaks in the entry become `<br>`, `**bold**` works, and the
-keys are shown at the end of the entry, as in `notes`.
+column. Line breaks in the entry become `<br>` and `**bold**` works.
 
 Rules for the sheet: a cell's second and later lines can't start with
 `.` (the first line can); column names can't contain `:` or start with

@@ -23,8 +23,7 @@ Only the keys and entry columns go into the dictionary; the others are
 kept so the file mirrors the sheet. A record with an empty keys cell is
 skipped; keys without an entry is an error, and so is a spreadsheet error
 value (#N/A, #REF!, ...) in either column. Line breaks in the entry
-become <br>, **bold** works, and the keys are shown at the end of the
-entry, as in notes.
+become <br> and **bold** works.
 
 The sheet's layout: row 1 is metadata as key/value pairs (keys, entry -
 required, the column names; title, lang - as HEADER:title/lang), row 2
@@ -224,8 +223,7 @@ def parse_records(text: str, first_line: int = 1, filename=None) -> list:
 
 
 class RecordInputHandler(BaseInputHandler):
-    """Like notes and one-liner, keys are used as given (no exclusions)
-    and shown at the end of the entry."""
+    """Like notes and one-liner, keys are used as given (no exclusions)."""
 
     def __init__(self, translator=None, exclusion_list=None, info=None):
         super().__init__(translator, exclusion_list=[], info=info)

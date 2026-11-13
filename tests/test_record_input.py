@@ -125,9 +125,9 @@ class _Tmp(unittest.TestCase):
 class TestRead(_Tmp):
     def test_entries(self):
         self.assertEqual(self.entries(TEXT), [
-            {"words": ["करोति", "कृ"], "entry": "to <b>do</b><br>कृ; करोति<br>[Dhatu notes]"},
+            {"words": ["करोति", "कृ"], "entry": "to <b>do</b><br>[Dhatu notes]"},
             {"words": ["e:Ab-1"],
-             "entry": "line one<br><br>line three<br>- dash, fine<br>e:Ab-1<br>[Dhatu notes]"},
+             "entry": "line one<br><br>line three<br>- dash, fine<br>[Dhatu notes]"},
         ])
 
     def test_errors(self):
@@ -168,8 +168,8 @@ class TestBuildBook(_Tmp):
         stats = self.d / "s.stats"
         out, _ = createDictionary.build_book(book, "tabfile", True, 0, stats_file=str(stats))
         self.assertEqual([l for l in out.split("\n") if l], [
-            "karma\t<br>note<br>कर्म<br>[T]",
-            "X|hello\tgreeting<br>hello; e:X<br>[unknown]",   # lang=en: no (eng)
+            "karma\t<br>note<br>[T]",
+            "X|hello\tgreeting<br>[unknown]",   # lang=en: no (eng)
         ])
         self.assertEqual(stats.read_text(encoding="utf-8"),
                          "a.txt: 1, 1\nsub/w.txt: 1, 2\nTOTAL: 2, 3 (synonly: 1)\n")

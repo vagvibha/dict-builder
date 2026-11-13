@@ -33,7 +33,7 @@ class TestOneLiner(unittest.TestCase):
     def test_basic(self):
         self.assertEqual(self.run_("- hello entry ((this;that))"),
                          [{'words': ['that', 'this'],
-                           'entry': 'hello entry<br>this; that<br>[unknown]'}])
+                           'entry': 'hello entry<br>[unknown]'}])
 
     def test_title_header_is_source(self):
         res = self.run_("- x ((w))", {'title': 'RigVeda'})
@@ -51,7 +51,7 @@ class TestOneLiner(unittest.TestCase):
 
     def test_empty_tokens_dropped(self):
         res = self.run_("- t ((a;;b; ;))")
-        self.assertEqual(res[0]['entry'], 't<br>a; b<br>[unknown]')
+        self.assertEqual(res[0]['entry'], 't<br>[unknown]')
 
     def test_line_without_keys_is_skipped(self):
         self.assertEqual(self.run_("- flashcard only line"), [])
@@ -83,21 +83,21 @@ class TestNotes(unittest.TestCase):
     def test_multiline_records(self):
         res = self.h.process_stream("- a;b\nline1\n\nline2\n- c\nz", {'title': 'N'})
         self.assertEqual(res, [
-            {'words': ['a', 'b'], 'entry': '<br>line1<br><br>line2<br>a; b<br>[N]'},
-            {'words': ['c'], 'entry': '<br>z<br>c<br>[N]'},
+            {'words': ['a', 'b'], 'entry': '<br>line1<br><br>line2<br>[N]'},
+            {'words': ['c'], 'entry': '<br>z<br>[N]'},
         ])
 
     def test_key_whitespace_and_trailing_semicolon(self):
         res = self.h.process_stream("-  p ;  s  ; m ; \nbody", {'title': 'T'})
         self.assertEqual(res[0]['words'], ['m', 'p', 's'])
-        self.assertEqual(res[0]['entry'], '<br>body<br>p; s; m<br>[T]')
+        self.assertEqual(res[0]['entry'], '<br>body<br>[T]')
 
     def test_key_only_record(self):
-        self.assertEqual(self.h.process_stream("- k", {})[0]['entry'], '<br><br>k<br>[unknown]')
+        self.assertEqual(self.h.process_stream("- k", {})[0]['entry'], '<br><br>[unknown]')
 
     def test_hindi_line_left_out(self):
         res = self.h.process_stream("- a\nline1\n{{हिन्दी वाक्य}}\nline2\n  {{दूसरा}}  ", {'title': 'N'})
-        self.assertEqual(res[0]['entry'], '<br>line1<br>line2<br>a<br>[N]')
+        self.assertEqual(res[0]['entry'], '<br>line1<br>line2<br>[N]')
 
     def test_inline_double_braces_kept(self):
         res = self.h.process_stream("- a\ntext {{not a line}} more", {'title': 'N'})
